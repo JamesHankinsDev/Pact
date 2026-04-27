@@ -66,3 +66,87 @@
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: var(--f-ui);
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: var(--r-pill);
+  padding: 12px 20px;
+  border: none;
+  cursor: pointer;
+  text-decoration: none;
+  transition: transform 0.08s ease, background 0.15s ease;
+}
+.btn:active {
+  transform: scale(0.97);
+}
+.btn-lime {
+  background: var(--lime);
+  color: var(--ink);
+}
+.btn-lime:hover {
+  background: var(--lime-deep);
+}
+.btn-ghost-dark {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-on-dark);
+}
+.btn-ghost-dark:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.btn-ghost-light {
+  background: rgba(10, 10, 10, 0.06);
+  color: var(--text-on-light);
+}
+
+/* Tick / checkbox */
+.tick {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+.tick.on {
+  background: var(--lime);
+  border-color: var(--lime);
+  color: var(--ink);
+}
+.tick.light {
+  border-color: rgba(10, 10, 10, 0.18);
+}
+.tick.light.on {
+  background: var(--lime);
+  border-color: var(--lime);
+  color: var(--ink);
+}
+
+/* Dotted progress / step bar */
+.dot-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.18);
+}
+.dot.on {
+  background: var(--lime);
+}
+.dot.coral {
+  background: var(--coral);
+}
