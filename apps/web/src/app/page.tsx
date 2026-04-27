@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { AvatarStack, Brand, Card, Chip, Eyebrow, Icon, StatNumeral } from '@/components/primitives';
+import { HomeAuthBar } from '@/components/HomeAuthBar';
 
 const CREW = [
   { initials: 'J', color: '#daff3f' },
@@ -19,9 +20,9 @@ export default function Home() {
       }}
     >
       <div style={{ maxWidth: 880, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 32 }}>
-        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
           <Brand />
-          <Eyebrow>v0.1 · scaffold</Eyebrow>
+          <HomeAuthBar />
         </header>
 
         <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

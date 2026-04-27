@@ -1,6 +1,13 @@
 'use client';
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 
 type OnboardingState = {
   inviteCode: string;
@@ -12,6 +19,8 @@ type OnboardingState = {
 
 const OnboardingContext = createContext<OnboardingState | null>(null);
 
+const STORAGE_KEY = 'pact:onboarding';
+
 const PACT_PREFIXES = ['HAYES', 'KEMP', 'NORTH', 'OAK', 'IRON', 'PINE', 'WOLF', 'ASH'];
 
 function generateInviteCode(): string {
@@ -20,15 +29,58 @@ function generateInviteCode(): string {
   return `${prefix}-${suffix}`;
 }
 
+type Persisted = {
+  inviteCode: string;
+  selectedContactIds: string[];
+  selectedGoalIds: string[];
+};
+
+function loadPersisted(): Persisted | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<Persisted>;
+    if (
+      typeof parsed.inviteCode === 'string'
+      && Array.isArray(parsed.selectedContactIds)
+      && Array.isArray(parsed.selectedGoalIds)
+    ) {
+      return parsed as Persisted;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 export function OnboardingProvider({ children }: { children: ReactNode }) {
-  // Use a stable placeholder during SSR; randomize after mount to avoid hydration mismatch.
+  // Stable defaults during SSR; rehydrate from localStorage after mount to
+  // avoid hydration mismatches and to survive the magic-link round-trip.
   const [inviteCode, setInviteCode] = useState('PACT-XXXX');
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>(['sa']);
   const [selectedGoalIds, setSelectedGoalIds] = useState<string[]>(['lift', 'protein']);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    setInviteCode(generateInviteCode());
+    const persisted = loadPersisted();
+    if (persisted) {
+      setInviteCode(persisted.inviteCode);
+      setSelectedContactIds(persisted.selectedContactIds);
+      setSelectedGoalIds(persisted.selectedGoalIds);
+    } else {
+      setInviteCode(generateInviteCode());
+    }
+    setHydrated(true);
   }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ inviteCode, selectedContactIds, selectedGoalIds }),
+    );
+  }, [hydrated, inviteCode, selectedContactIds, selectedGoalIds]);
 
   const value = useMemo<OnboardingState>(
     () => ({
@@ -50,4 +102,9 @@ export function useOnboarding(): OnboardingState {
   const ctx = useContext(OnboardingContext);
   if (!ctx) throw new Error('useOnboarding must be used within an OnboardingProvider');
   return ctx;
+}
+
+export function clearPersistedOnboarding() {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(STORAGE_KEY);
 }

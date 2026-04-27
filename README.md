@@ -32,6 +32,24 @@ pnpm dev
 
 The web app boots at http://localhost:3000.
 
+## Firebase setup
+
+In the Firebase console:
+
+- **Authentication** → enable Google, Email/Password (with the "Email link (passwordless sign-in)" toggle on), and Phone.
+- **Auth → Settings → Authorized domains** → confirm `localhost` is listed; add your Vercel domain when you deploy.
+- **Phone testing numbers** (recommended for dev) — add a fake number + code under Auth → Sign-in method → Phone.
+- **Firestore** → create a database in production mode.
+
+Then deploy the rules from this repo. With the Firebase CLI installed (`npm i -g firebase-tools && firebase login`):
+
+```bash
+firebase use --add                      # select your Firebase project
+firebase deploy --only firestore:rules  # pushes firestore.rules
+```
+
+Web SDK config goes in `apps/web/.env.local` (see `.env.local.example`).
+
 ## Design source
 
 The design hand-off (FitForge / Pact) lives outside the repo. Authoritative files:
