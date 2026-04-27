@@ -1,0 +1,39 @@
+@import 'tailwindcss';
+@import '@pact/design-tokens/tokens.css';
+
+@theme {
+  --color-ink: #0a0a0a;
+  --color-ink-soft: #14130f;
+  --color-ink-card: #1a1916;
+  --color-paper: #f5f3ee;
+  --color-paper-card: #ffffff;
+  --color-lime: #daff3f;
+  --color-lime-deep: #b8dd1f;
+  --color-coral: #ff6b4a;
+  --color-coral-deep: #e54a2a;
+  --color-sky: #7cd4ff;
+  --color-plum: #c58cff;
+
+  --font-display: 'Inter Tight', system-ui, sans-serif;
+  --font-ui: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --radius-pill: 9999px;
+  --radius-card: 22px;
+  --radius-tile: 14px;
+  --radius-chip: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--ink);
+  color: var(--text-on-dark);
+  font-family: var(--f-ui);
+  -webkit-font-smoothing: antialiased;
+}

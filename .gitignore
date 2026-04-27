@@ -1,0 +1,43 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# next.js
+.next/
+out/
+next-env.d.ts
+tsconfig.tsbuildinfo
+
+# build
+dist/
+build/
+
+# env
+.env
+.env.local
+.env.*.local
+!.env.example
+!.env.local.example
+
+# vercel / deploy
+.vercel/
+
+# turbo (future)
+.turbo/
+
+# misc
+.DS_Store
+*.log
+*.pem
+.eslintcache
+
+# IDE
+.idea/
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# expo (future, when apps/mobile lands)
+apps/mobile/.expo/
+apps/mobile/dist/
+apps/mobile/web-build/

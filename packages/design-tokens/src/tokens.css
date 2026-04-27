@@ -1,0 +1,68 @@
+:root {
+  /* Surfaces */
+  --ink: #0a0a0a;
+  --ink-soft: #14130f;
+  --ink-card: #1a1916;
+  --ink-line: rgba(255, 255, 255, 0.08);
+  --ink-line-strong: rgba(255, 255, 255, 0.16);
+
+  --paper: #f5f3ee;
+  --paper-card: #ffffff;
+  --paper-line: rgba(10, 10, 10, 0.08);
+  --paper-line-strong: rgba(10, 10, 10, 0.16);
+
+  /* Text on dark */
+  --text-on-dark: #f5f3ee;
+  --text-on-dark-mute: rgba(245, 243, 238, 0.55);
+  --text-on-dark-faint: rgba(245, 243, 238, 0.35);
+
+  /* Text on light */
+  --text-on-light: #14130f;
+  --text-on-light-mute: rgba(20, 19, 15, 0.55);
+  --text-on-light-faint: rgba(20, 19, 15, 0.35);
+
+  /* Accents */
+  --lime: #daff3f;
+  --lime-deep: #b8dd1f;
+  --coral: #ff6b4a;
+  --coral-deep: #e54a2a;
+  --sky: #7cd4ff;
+  --plum: #c58cff;
+
+  /* Fonts — values come from next/font CSS variables when used inside a Next app.
+     Falls back to system fonts if the variables aren't set. */
+  --f-display: var(--font-display, system-ui, sans-serif);
+  --f-ui: var(--font-ui, system-ui, sans-serif);
+  --f-mono: var(--font-mono, ui-monospace, monospace);
+
+  /* Radii */
+  --r-pill: 9999px;
+  --r-card: 22px;
+  --r-tile: 14px;
+  --r-chip: 8px;
+}
+
+.numeral {
+  font-family: var(--f-display);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+}
+
+.mono {
+  font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.display {
+  font-family: var(--f-display);
+  letter-spacing: -0.025em;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
