@@ -147,7 +147,6 @@ export default function CrewPage() {
         step={2}
         href="/onboarding/goals"
         label={`Continue · ${selectedContactIds.length} added`}
-        disabled={selectedContactIds.length === 0}
       />
     </>
   );

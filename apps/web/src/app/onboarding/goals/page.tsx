@@ -114,7 +114,6 @@ export default function GoalsPage() {
         step={3}
         href="/onboarding/pact"
         label={`Continue · ${selectedGoalIds.length} picked`}
-        disabled={selectedGoalIds.length < 2}
       />
     </>
   );
