@@ -1,8 +1,19 @@
 'use client';
 
-import { collection, doc, getDoc, getDocs, orderBy, query } from 'firebase/firestore';
+import {
+  Timestamp,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  where,
+} from 'firebase/firestore';
 import { getFirebase } from './firebase';
 import type { GroupMemberDoc } from './groups';
+import type { Macros, MealParseItem, PactCommitment } from '@pact/types';
 
 export type DashboardGroup = {
   id: string;
@@ -12,12 +23,37 @@ export type DashboardGroup = {
   currentWeek: string;
 };
 
+/** UI-shaped meal record — `loggedAt` flattened to ms for easy comparisons. */
+export type MealRecord = {
+  id: string;
+  memberId: string;
+  loggedAt: number;
+  photoUrl: string | null;
+  totals: Macros;
+  items: MealParseItem[];
+  notes: string | null;
+};
+
+export type WeekPactRecord = {
+  week: string;
+  signedAt: number;
+  commitments: PactCommitment;
+  memberUids: string[];
+};
+
 export type DashboardData = {
   group: DashboardGroup;
   members: GroupMemberDoc[];
+  /** Last 7 days of meals across the whole group, newest first. */
+  meals: MealRecord[];
+  /** This week's signed pact, if any. */
+  pact: WeekPactRecord | null;
 };
 
-/** Load the current group + its member display snapshots for the dashboard. */
+const MEALS_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+const MEALS_HARD_LIMIT = 200;
+
+/** Load the current group + members + recent meals + this week's pact. */
 export async function loadDashboardData(groupId: string): Promise<DashboardData> {
   const { db } = getFirebase();
 
@@ -26,12 +62,94 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
   const g = groupSnap.data() as Omit<DashboardGroup, 'id'>;
   const group: DashboardGroup = { id: groupId, ...g };
 
-  const membersSnap = await getDocs(
-    query(collection(db, 'groups', groupId, 'members'), orderBy('joinedAt', 'asc')),
-  );
+  const sinceMs = Date.now() - MEALS_LOOKBACK_MS;
+  const sinceTs = Timestamp.fromMillis(sinceMs);
+
+  const [membersSnap, mealsSnap, pactSnap] = await Promise.all([
+    getDocs(query(collection(db, 'groups', groupId, 'members'), orderBy('joinedAt', 'asc'))),
+    getDocs(
+      query(
+        collection(db, 'groups', groupId, 'meals'),
+        where('loggedAt', '>=', sinceTs),
+        orderBy('loggedAt', 'desc'),
+        limit(MEALS_HARD_LIMIT),
+      ),
+    ),
+    getDoc(doc(db, 'groups', groupId, 'pacts', group.currentWeek)),
+  ]);
+
   const members: GroupMemberDoc[] = membersSnap.docs.map((d) => d.data() as GroupMemberDoc);
 
-  return { group, members };
+  const meals: MealRecord[] = mealsSnap.docs.map((d) => {
+    const raw = d.data() as {
+      memberId: string;
+      loggedAt?: Timestamp;
+      photoUrl?: string;
+      totals?: Macros;
+      items?: MealParseItem[];
+      notes?: string | null;
+    };
+    return {
+      id: d.id,
+      memberId: raw.memberId,
+      loggedAt: raw.loggedAt?.toMillis() ?? 0,
+      photoUrl: raw.photoUrl ?? null,
+      totals: raw.totals ?? { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 },
+      items: raw.items ?? [],
+      notes: raw.notes ?? null,
+    };
+  });
+
+  const pact: WeekPactRecord | null = pactSnap.exists()
+    ? (() => {
+        const r = pactSnap.data() as {
+          week: string;
+          signedAt?: Timestamp;
+          commitments?: PactCommitment;
+          memberUids?: string[];
+        };
+        return {
+          week: r.week,
+          signedAt: r.signedAt?.toMillis() ?? 0,
+          commitments: r.commitments ?? {},
+          memberUids: r.memberUids ?? [],
+        };
+      })()
+    : null;
+
+  return { group, members, meals, pact };
+}
+
+/** Sum macros across a list of meals. */
+export function sumMacros(meals: MealRecord[]): Macros {
+  return meals.reduce(
+    (acc, m) => ({
+      calories: acc.calories + m.totals.calories,
+      proteinG: acc.proteinG + m.totals.proteinG,
+      carbsG: acc.carbsG + m.totals.carbsG,
+      fatG: acc.fatG + m.totals.fatG,
+    }),
+    { calories: 0, proteinG: 0, carbsG: 0, fatG: 0 },
+  );
+}
+
+/** Filter meals to just those logged today, in the user's local timezone. */
+export function mealsLoggedToday(meals: MealRecord[], now: Date = new Date()): MealRecord[] {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return meals.filter((m) => m.loggedAt >= start);
+}
+
+/** A short relative-time string ("now", "12m", "3h", "2d", "Apr 21"). */
+export function shortRelativeTime(ms: number, now: number = Date.now()): string {
+  const diff = Math.max(0, now - ms);
+  const min = Math.floor(diff / 60_000);
+  if (min < 1) return 'now';
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d`;
+  return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 /** Format an ISO week ("2026-W17") into a human-readable Mon–Sun range. */

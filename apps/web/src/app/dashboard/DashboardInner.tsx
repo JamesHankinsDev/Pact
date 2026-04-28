@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Avatar, AvatarStack, Card, Chip, Eyebrow, Icon } from '@/components/primitives';
@@ -9,9 +9,13 @@ import { useAuth } from '@/lib/auth-context';
 import {
   formatWeekRange,
   loadDashboardData,
+  mealsLoggedToday,
+  shortRelativeTime,
+  sumMacros,
   todayIndexInWeek,
   weekDayNumbers,
   type DashboardData,
+  type MealRecord,
 } from '@/lib/group-data';
 import type { GroupMemberDoc } from '@/lib/groups';
 
@@ -52,19 +56,39 @@ export function DashboardInner() {
 /* ── Main dashboard ──────────────────────────────────────────────────── */
 
 function Dashboard({ data }: { data: DashboardData }) {
-  const { group, members } = data;
+  const { group, members, meals } = data;
   const week = formatWeekRange(group.currentWeek);
   const dayNums = weekDayNumbers(group.currentWeek);
   const todayIdx = todayIndexInWeek(group.currentWeek);
   const stackMembers = members.map((m) => ({ initials: m.initials, color: m.color }));
 
+  const todayMeals = useMemo(() => mealsLoggedToday(meals), [meals]);
+  const todayTotals = useMemo(() => sumMacros(todayMeals), [todayMeals]);
+  const memberById = useMemo(
+    () => Object.fromEntries(members.map((m) => [m.uid, m])),
+    [members],
+  );
+
   return (
     <div style={{ background: 'var(--ink)', color: 'var(--text-on-dark)', minHeight: '100dvh' }}>
       <TopBar week={week} stackMembers={stackMembers} />
       <div style={{ padding: '28px 32px', maxWidth: 1440, margin: '0 auto' }}>
-        <HeroStrip group={group} members={members} />
-        <WeekGrid members={members} dayNums={dayNums} todayIdx={todayIdx} />
-        <BottomRow members={members} />
+        <HeroStrip
+          group={group}
+          members={members}
+          weekMealCount={meals.length}
+          todayMealCount={todayMeals.length}
+          todayCalories={todayTotals.calories}
+          todayProteinG={todayTotals.proteinG}
+        />
+        <WeekGrid
+          members={members}
+          meals={meals}
+          dayNums={dayNums}
+          todayIdx={todayIdx}
+          isoWeek={group.currentWeek}
+        />
+        <BottomRow meals={meals} memberById={memberById} />
       </div>
     </div>
   );
@@ -165,9 +189,17 @@ function TopBar({
 function HeroStrip({
   group,
   members,
+  weekMealCount,
+  todayMealCount,
+  todayCalories,
+  todayProteinG,
 }: {
   group: { name: string; memberUids: string[] };
   members: GroupMemberDoc[];
+  weekMealCount: number;
+  todayMealCount: number;
+  todayCalories: number;
+  todayProteinG: number;
 }) {
   const stack = members.slice(0, 4).map((m) => ({ initials: m.initials, color: m.color }));
   return (
@@ -224,52 +256,26 @@ function HeroStrip({
       </div>
 
       <Card style={{ padding: '20px 22px' }}>
-        <Eyebrow>WORKOUTS LOGGED</Eyebrow>
+        <Eyebrow>MEALS · 7 DAYS</Eyebrow>
         <div className="numeral" style={{ fontSize: 60, marginTop: 4 }}>
-          21
-          <span style={{ fontSize: 18, color: 'var(--text-on-dark-faint)', fontFamily: 'var(--f-mono)' }}>
-            /25
-          </span>
-        </div>
-        <div
-          style={{
-            height: 6,
-            background: 'rgba(255,255,255,0.08)',
-            borderRadius: 3,
-            marginTop: 10,
-            overflow: 'hidden',
-          }}
-        >
-          <div style={{ height: '100%', width: '84%', background: 'var(--lime)' }} />
+          {weekMealCount}
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', marginTop: 8 }}>
-          4 to hit weekly goal
+          {weekMealCount === 0
+            ? 'No meals logged yet — try /dev/meal-vision'
+            : `${members.length} crew · across the last week`}
         </div>
       </Card>
 
       <Card style={{ padding: '20px 22px' }}>
-        <Eyebrow>MED ADHERENCE</Eyebrow>
+        <Eyebrow>TODAY · CALORIES</Eyebrow>
         <div className="numeral" style={{ fontSize: 60, marginTop: 4 }}>
-          92
-          <span style={{ fontSize: 18, fontFamily: 'var(--f-mono)', color: 'var(--text-on-dark-faint)' }}>
-            %
-          </span>
-        </div>
-        <div style={{ display: 'flex', gap: 3, marginTop: 10 }}>
-          {[1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1].map((d, i) => (
-            <div
-              key={i}
-              style={{
-                flex: 1,
-                height: 14,
-                borderRadius: 2,
-                background: d ? 'var(--lime)' : 'rgba(255,255,255,0.08)',
-              }}
-            />
-          ))}
+          {Math.round(todayCalories).toLocaleString()}
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', marginTop: 8 }}>
-          2 missed · last 2 weeks
+          {todayMealCount === 0
+            ? 'Nothing logged today yet'
+            : `${todayMealCount} meal${todayMealCount === 1 ? '' : 's'} · ${Math.round(todayProteinG)}g protein`}
         </div>
       </Card>
     </div>
@@ -297,25 +303,41 @@ type ActivityKind = keyof typeof ACTIVITY_LABEL;
 type ActivityColor = keyof typeof ACTIVITY_PALETTE;
 type Activity = { color: ActivityColor; kind: ActivityKind };
 
-function seededRand(uid: string, salt: number): number {
-  let h = salt;
-  for (let i = 0; i < uid.length; i++) h = (h * 31 + uid.charCodeAt(i)) | 0;
-  h = (h * 1103515245 + 12345) | 0;
-  return ((h >>> 16) & 0x7fff) / 0x7fff;
+/**
+ * Build the per-day activity for one member from real Firestore data.
+ * Right now only meals are wired (sky/bowl pill) — workouts/practices/PRs
+ * will fill in as those modules land.
+ */
+function memberWeekActivity(memberUid: string, weekDayStarts: number[], meals: MealRecord[]): Activity[][] {
+  const dayMs = 24 * 60 * 60 * 1000;
+  return weekDayStarts.map((start) => {
+    const end = start + dayMs;
+    const memberMealsThatDay = meals.filter(
+      (m) => m.memberId === memberUid && m.loggedAt >= start && m.loggedAt < end,
+    );
+    return memberMealsThatDay.length > 0 ? [{ color: 'sky', kind: 'bowl' }] : [];
+  });
 }
 
-function memberWeekActivity(uid: string): Activity[][] {
-  const palette: Array<Activity[]> = [
-    [{ color: 'lime', kind: 'dumbbell' }],
-    [{ color: 'sky', kind: 'bowl' }],
-    [{ color: 'lime', kind: 'dumbbell' }, { color: 'coral', kind: 'flame' }],
-    [{ color: 'plum', kind: 'book' }],
-    [{ color: 'sky', kind: 'run' }],
-    [],
-  ];
-  return Array.from({ length: 7 }, (_, day) => {
-    const r = seededRand(uid, day + 1);
-    return palette[Math.floor(r * palette.length)] ?? [];
+/**
+ * Compute the start-of-day timestamp (local time, ms) for each Mon–Sun
+ * of the ISO week.
+ */
+function weekDayStarts(isoWeek: string): number[] {
+  const m = isoWeek.match(/^(\d{4})-W(\d{2})$/);
+  if (!m) return [];
+  const year = parseInt(m[1]!, 10);
+  const week = parseInt(m[2]!, 10);
+  // Monday of ISO week N (in local time)
+  const jan4 = new Date(year, 0, 4);
+  const jan4Day = jan4.getDay() || 7;
+  const monday = new Date(jan4);
+  monday.setDate(jan4.getDate() - jan4Day + 1 + (week - 1) * 7);
+  monday.setHours(0, 0, 0, 0);
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return d.getTime();
   });
 }
 
@@ -342,13 +364,18 @@ function ActivityPill({ activity }: { activity: Activity }) {
 
 function WeekGrid({
   members,
+  meals,
   dayNums,
   todayIdx,
+  isoWeek,
 }: {
   members: GroupMemberDoc[];
+  meals: MealRecord[];
   dayNums: number[];
   todayIdx: number;
+  isoWeek: string;
 }) {
+  const dayStarts = useMemo(() => weekDayStarts(isoWeek), [isoWeek]);
   return (
     <div style={{ marginBottom: 18 }}>
       <div
@@ -420,7 +447,7 @@ function WeekGrid({
         </div>
 
         {members.slice(0, 6).map((m, idx) => {
-          const schedule = memberWeekActivity(m.uid);
+          const schedule = memberWeekActivity(m.uid, dayStarts, meals);
           const completed = schedule.filter((day) => day.length > 0).length;
           return (
             <div
@@ -495,10 +522,13 @@ function DotSwatch({ color }: { color: string }) {
 
 /* ── Bottom row ──────────────────────────────────────────────────────── */
 
-function BottomRow({ members }: { members: GroupMemberDoc[] }) {
-  const m1 = members[0];
-  const m2 = members[1];
-
+function BottomRow({
+  meals,
+  memberById,
+}: {
+  meals: MealRecord[];
+  memberById: Record<string, GroupMemberDoc>;
+}) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
       <Card>
@@ -549,20 +579,7 @@ function BottomRow({ members }: { members: GroupMemberDoc[] }) {
             <circle key={i} cx={x} cy={y} r="3" fill="#daff3f" />
           ))}
         </svg>
-        <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-          {m1 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-              <span style={{ width: 8, height: 2, background: '#daff3f' }} />
-              {m1.name}
-            </div>
-          )}
-          {m2 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-              <span style={{ width: 8, height: 2, background: '#ff6b4a' }} />
-              {m2.name}
-            </div>
-          )}
-        </div>
+        <div style={{ ...mockTagStyle, marginTop: 8 }}>placeholder · weight module coming</div>
       </Card>
 
       <Card>
@@ -580,7 +597,7 @@ function BottomRow({ members }: { members: GroupMemberDoc[] }) {
               Inventory
             </div>
           </div>
-          <Chip color="ghost">28 ITEMS</Chip>
+          <Chip color="ghost">PLACEHOLDER</Chip>
         </div>
         {[
           { name: 'Eggs', meter: 0.66, sub: '8 of 12 left' },
@@ -640,59 +657,82 @@ function BottomRow({ members }: { members: GroupMemberDoc[] }) {
           </div>
           <Icon name="chat" size={18} color="rgba(245,243,238,0.5)" />
         </div>
-        {sampleChatter(members).map((p, i, arr) => (
-          <div
-            key={i}
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 10,
-              padding: '10px 0',
-              borderBottom: i < arr.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
-            }}
-          >
-            <Avatar initials={p.initials} color={p.color} size={28} />
-            <div style={{ flex: 1, minWidth: 0 }}>
+        {meals.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', padding: '16px 0' }}>
+            No activity in the last 7 days. Log a meal to see it here.
+          </div>
+        ) : (
+          meals.slice(0, 5).map((meal, i, arr) => {
+            const member = memberById[meal.memberId];
+            const name = member?.name ?? 'Member';
+            const initials = member?.initials ?? '?';
+            const color = member?.color ?? 'var(--lime)';
+            const summary = mealSummary(meal);
+            return (
               <div
+                key={meal.id}
                 style={{
                   display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
+                  alignItems: 'flex-start',
+                  gap: 10,
+                  padding: '10px 0',
+                  borderBottom: i < arr.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
                 }}
               >
-                <span style={{ fontSize: 12, fontWeight: 600 }}>{p.who}</span>
-                <span
-                  className="mono"
-                  style={{ fontSize: 10, color: 'var(--text-on-dark-faint)' }}
-                >
-                  {p.t}
-                </span>
+                <Avatar initials={initials} color={color} size={28} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, fontWeight: 600 }}>{name}</span>
+                    <span
+                      className="mono"
+                      style={{ fontSize: 10, color: 'var(--text-on-dark-faint)' }}
+                    >
+                      {shortRelativeTime(meal.loggedAt)}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--text-on-dark-mute)',
+                      marginTop: 2,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {summary}
+                  </div>
+                </div>
+                <Chip color="ghost">MEAL</Chip>
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', marginTop: 2 }}>
-                {p.msg}
-              </div>
-            </div>
-            <Chip color="ghost">{p.tag}</Chip>
-          </div>
-        ))}
+            );
+          })
+        )}
       </Card>
     </div>
   );
 }
 
-function sampleChatter(
-  members: GroupMemberDoc[],
-): Array<{ who: string; initials: string; color: string; t: string; msg: string; tag: string }> {
-  const m0 = members[0];
-  const m1 = members[1];
-  const m2 = members[2];
-  const out: Array<{ who: string; initials: string; color: string; t: string; msg: string; tag: string }> = [];
-  if (m0) out.push({ who: m0.name, initials: m0.initials, color: m0.color, t: '22m', msg: 'Crushed 5k pace', tag: 'PR' });
-  if (m1) out.push({ who: m1.name, initials: m1.initials, color: m1.color, t: '1h', msg: 'Lunch was 52g protein', tag: 'MEAL' });
-  if (m2) out.push({ who: m2.name, initials: m2.initials, color: m2.color, t: '3h', msg: 'Journaling streak: 12 days', tag: 'PRAC' });
-  out.push({ who: 'Pact', initials: '✦', color: '#daff3f', t: '5h', msg: 'Crew goal: 21/25 workouts', tag: 'NUDGE' });
-  return out;
+function mealSummary(meal: MealRecord): string {
+  const cal = Math.round(meal.totals.calories);
+  const protein = Math.round(meal.totals.proteinG);
+  const lead =
+    meal.items.length > 0
+      ? meal.items
+          .slice(0, 2)
+          .map((it) => it.name)
+          .join(', ') + (meal.items.length > 2 ? '…' : '')
+      : 'Logged meal';
+  return `${lead} · ${cal} cal · ${protein}g protein`;
 }
+
+const mockTagStyle = {
+  fontSize: 10,
+  fontFamily: 'var(--f-mono)',
+  color: 'var(--text-on-dark-faint)',
+  textTransform: 'uppercase' as const,
+  letterSpacing: '0.14em',
+};
 
 /* ── Empty / loading states ──────────────────────────────────────────── */
 
