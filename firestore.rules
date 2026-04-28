@@ -77,6 +77,11 @@ service cloud.firestore {
       match /shoppingLists/{listId} {
         allow read, write: if isMember(groupId);
       }
+      match /inventory/{itemId} {
+        // Shared pantry — any member can read or modify, write tracks the
+        // adding/updating member via the addedBy/updatedBy fields.
+        allow read, write: if isMember(groupId);
+      }
       match /feed/{itemId} {
         allow read, write: if isMember(groupId);
       }

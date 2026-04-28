@@ -136,9 +136,29 @@ export interface InventoryItem {
   groupId: string;
   name: string;
   quantity: number;
-  unit?: string;         // "g", "ea"
+  unit?: string;            // "ea", "lb", "oz", "gal", "pack"
   estCost?: number;
+  source?: 'receipt' | 'manual';
+  receiptId?: string;       // groups items added in the same receipt scan
+  addedBy?: string;         // uid
+  addedAt?: Timestamp;
   updatedAt: Timestamp;
+}
+
+/** Shape returned by the report_receipt tool — flat per-line. */
+export interface ReceiptParseItem {
+  name: string;
+  quantity: number;
+  unit: string;
+  estCost?: number;
+}
+
+export interface ReceiptParseResult {
+  items: ReceiptParseItem[];
+  store?: string;
+  subtotal?: number;
+  total?: number;
+  notes?: string;
 }
 
 export interface ShoppingItem {
