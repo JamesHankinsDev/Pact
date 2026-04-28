@@ -96,6 +96,27 @@ export interface MealItem {
   macros?: Partial<Macros>;
 }
 
+/**
+ * Shape returned by the /api/vision/meal endpoint. Macros are flattened on
+ * each item to match what the model emits via the report_meal tool. Convert
+ * to MealItem when persisting to Firestore.
+ */
+export interface MealParseItem {
+  name: string;
+  portion?: string;
+  grams?: number;
+  calories: number;
+  proteinG: number;
+  carbsG: number;
+  fatG: number;
+}
+
+export interface MealParseResult {
+  items: MealParseItem[];
+  totals: Macros;
+  notes?: string;
+}
+
 export interface MealLog {
   id: string;
   memberId: string;

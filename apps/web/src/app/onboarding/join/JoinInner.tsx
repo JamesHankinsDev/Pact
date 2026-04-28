@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Eyebrow, Icon } from '@/components/primitives';
+import { Icon } from '@/components/primitives';
 import { useAuth } from '@/lib/auth-context';
 import { joinGroupByCode, normalizeInviteCode } from '@/lib/groups';
 
