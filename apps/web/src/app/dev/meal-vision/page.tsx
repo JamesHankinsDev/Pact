@@ -5,19 +5,29 @@ import Link from 'next/link';
 import { Brand, Card, Eyebrow, Icon, StatNumeral } from '@/components/primitives';
 import { useAuth } from '@/lib/auth-context';
 import { getFirebase } from '@/lib/firebase';
+import { logMeal } from '@/lib/meal-log';
 import type { MealParseResult } from '@pact/types';
+
+type ParsedSlot = {
+  result: MealParseResult;
+  preview: string;
+  blob: Blob;
+  mediaType: string;
+};
 
 type State =
   | { status: 'idle' }
   | { status: 'uploading' }
   | { status: 'analyzing' }
-  | { status: 'done'; result: MealParseResult; preview: string }
+  | { status: 'done'; parsed: ParsedSlot }
+  | { status: 'logging'; parsed: ParsedSlot }
+  | { status: 'logged'; parsed: ParsedSlot; mealId: string }
   | { status: 'error'; message: string };
 
 const ALLOWED = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
 export default function MealVisionDevPage() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
   const [state, setState] = useState<State>({ status: 'idle' });
 
   const handleFile = async (file: File) => {
@@ -55,9 +65,36 @@ export default function MealVisionDevPage() {
       }
 
       const result = (await res.json()) as MealParseResult;
-      setState({ status: 'done', result, preview });
+      setState({
+        status: 'done',
+        parsed: { result, preview, blob: file, mediaType: file.type },
+      });
     } catch (err) {
       setState({ status: 'error', message: err instanceof Error ? err.message : 'Request failed' });
+    }
+  };
+
+  const handleLog = async () => {
+    if (state.status !== 'done') return;
+    if (!user || !profile?.currentGroupId) {
+      setState({
+        status: 'error',
+        message: 'You need to be in a pact to log a meal — make or join one first.',
+      });
+      return;
+    }
+
+    setState({ status: 'logging', parsed: state.parsed });
+    try {
+      const { mealId } = await logMeal({
+        uid: user.uid,
+        groupId: profile.currentGroupId,
+        parsed: state.parsed.result,
+        photo: { blob: state.parsed.blob, mediaType: state.parsed.mediaType },
+      });
+      setState({ status: 'logged', parsed: state.parsed, mealId });
+    } catch (err) {
+      setState({ status: 'error', message: err instanceof Error ? err.message : 'Could not save meal' });
     }
   };
 
@@ -92,17 +129,33 @@ export default function MealVisionDevPage() {
 
         {user && (
           <>
-            <FileDrop onFile={handleFile} disabled={state.status === 'uploading' || state.status === 'analyzing'} />
+            <FileDrop
+              onFile={handleFile}
+              disabled={
+                state.status === 'uploading' ||
+                state.status === 'analyzing' ||
+                state.status === 'logging'
+              }
+            />
 
             {state.status === 'uploading' && <Pulse label="Reading file…" />}
             {state.status === 'analyzing' && <Pulse label="Asking Claude…" />}
+            {state.status === 'logging' && <Pulse label="Saving to your pact…" />}
             {state.status === 'error' && (
               <Card style={{ borderColor: 'rgba(255,107,74,0.3)', background: 'rgba(255,107,74,0.08)' }}>
                 <Eyebrow color="var(--coral)">ERROR</Eyebrow>
                 <p style={{ fontSize: 13, marginTop: 6, marginBottom: 0, color: 'var(--coral)' }}>{state.message}</p>
               </Card>
             )}
-            {state.status === 'done' && <Result result={state.result} preview={state.preview} />}
+            {(state.status === 'done' || state.status === 'logging' || state.status === 'logged') && (
+              <Result
+                result={state.parsed.result}
+                preview={state.parsed.preview}
+                onLog={state.status === 'done' ? handleLog : undefined}
+                logged={state.status === 'logged' ? state.mealId : undefined}
+                inGroup={!!profile?.currentGroupId}
+              />
+            )}
           </>
         )}
       </div>
@@ -181,7 +234,19 @@ function Pulse({ label }: { label: string }) {
   );
 }
 
-function Result({ result, preview }: { result: MealParseResult; preview: string }) {
+function Result({
+  result,
+  preview,
+  onLog,
+  logged,
+  inGroup,
+}: {
+  result: MealParseResult;
+  preview: string;
+  onLog?: () => void;
+  logged?: string;
+  inGroup: boolean;
+}) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -232,6 +297,33 @@ function Result({ result, preview }: { result: MealParseResult; preview: string 
           <p style={{ fontSize: 13, marginTop: 6, marginBottom: 0, lineHeight: 1.5 }}>{result.notes}</p>
         </Card>
       )}
+
+      {logged ? (
+        <Card style={{ background: 'rgba(218,255,63,0.1)', borderColor: 'rgba(218,255,63,0.3)' }}>
+          <Eyebrow color="var(--lime)">LOGGED</Eyebrow>
+          <p style={{ fontSize: 13, marginTop: 6, marginBottom: 4, lineHeight: 1.5 }}>
+            Saved to your pact. Meal ID:
+          </p>
+          <code style={{ ...mono, fontSize: 11, color: 'var(--text-on-dark-mute)' }}>{logged}</code>
+        </Card>
+      ) : onLog ? (
+        <button
+          type="button"
+          onClick={onLog}
+          disabled={!inGroup}
+          className="btn btn-lime"
+          style={{
+            padding: '14px 20px',
+            fontSize: 14,
+            opacity: inGroup ? 1 : 0.5,
+            cursor: inGroup ? 'pointer' : 'not-allowed',
+          }}
+          title={inGroup ? '' : 'Make or join a pact first'}
+        >
+          {inGroup ? 'Log this meal' : 'Need a pact to log meals'}
+          <Icon name="check" size={14} color="#0a0a0a" strokeWidth={2.5} />
+        </button>
+      ) : null}
     </div>
   );
 }

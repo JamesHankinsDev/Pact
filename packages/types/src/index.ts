@@ -123,8 +123,11 @@ export interface MealLog {
   groupId: string;
   loggedAt: Timestamp;
   photoUrl?: string;
-  items: MealItem[];
-  macros: Macros;
+  storagePath?: string;  // gs://-style path so we can revoke or move later
+  items: MealParseItem[];
+  totals: Macros;
+  notes?: string;
+  source: 'vision' | 'manual';
   edited: boolean;       // true if user corrected vision output
 }
 

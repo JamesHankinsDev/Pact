@@ -68,7 +68,11 @@ service cloud.firestore {
         allow read, write: if isMember(groupId);
       }
       match /meals/{mealId} {
-        allow read, write: if isMember(groupId);
+        allow read: if isMember(groupId);
+        allow create: if isMember(groupId)
+          && request.resource.data.memberId == request.auth.uid;
+        allow update, delete: if isMember(groupId)
+          && resource.data.memberId == request.auth.uid;
       }
       match /shoppingLists/{listId} {
         allow read, write: if isMember(groupId);

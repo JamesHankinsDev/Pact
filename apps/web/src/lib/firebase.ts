@@ -1,6 +1,7 @@
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import { getAuth, type Auth } from 'firebase/auth';
 import { getFirestore, type Firestore } from 'firebase/firestore';
+import { getStorage, type FirebaseStorage } from 'firebase/storage';
 
 const config = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -14,8 +15,14 @@ const config = {
 let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let db: Firestore | undefined;
+let storage: FirebaseStorage | undefined;
 
-export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
+export function getFirebase(): {
+  app: FirebaseApp;
+  auth: Auth;
+  db: Firestore;
+  storage: FirebaseStorage;
+} {
   if (!config.apiKey) {
     throw new Error(
       'Firebase config missing — set NEXT_PUBLIC_FIREBASE_* env vars in apps/web/.env.local',
@@ -25,6 +32,7 @@ export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
     app = getApps()[0] ?? initializeApp(config);
     auth = getAuth(app);
     db = getFirestore(app);
+    storage = getStorage(app);
   }
-  return { app, auth: auth!, db: db! };
+  return { app, auth: auth!, db: db!, storage: storage! };
 }

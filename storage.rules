@@ -1,0 +1,22 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Per-user meal photos. Path: /users/{uid}/meals/{mealId}.{ext}
+    //
+    // Read: any signed-in user. Photo download URLs aren't enumerable from
+    // outside; they live inside Firestore meal docs which are gated on group
+    // membership, so anyone who knows the URL has already passed Firestore's
+    // group-member check.
+    //
+    // Write: only the owning user, capped at 10 MB, image/* content types.
+    match /users/{uid}/meals/{filename} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+  }
+}
