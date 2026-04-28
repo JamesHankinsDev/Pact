@@ -46,9 +46,35 @@ Then deploy the rules from this repo. With the Firebase CLI installed (`npm i -g
 ```bash
 firebase use --add                      # select your Firebase project
 firebase deploy --only firestore:rules  # pushes firestore.rules
+firebase deploy --only storage          # pushes storage.rules (after Storage is enabled in console)
 ```
 
 Web SDK config goes in `apps/web/.env.local` (see `.env.local.example`).
+
+### Meal-photo cleanup (24h auto-delete)
+
+Meal photos go to `mealPhotos/{uid}/{mealId}.{ext}` so a Cloud Storage lifecycle
+rule can target them precisely. The macros are persisted in Firestore; the
+photo itself is just an input to the macro extraction and gets garbage-collected
+after 24h. Apply the rule once with the `gcloud` CLI:
+
+```bash
+gcloud auth login
+gcloud config set project pact-c4537                   # or your project ID
+gcloud storage buckets update gs://<your-bucket-name> \
+  --lifecycle-file=lifecycle.json
+```
+
+Bucket name is whatever you put in `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`
+(usually `<project-id>.firebasestorage.app` for newer projects, or
+`<project-id>.appspot.com` for older ones). Verify it stuck:
+
+```bash
+gcloud storage buckets describe gs://<your-bucket-name> --format=json | jq .lifecycle_config
+```
+
+Lifecycle rules run at least once per day, so an object may live a few hours
+past 24h before deletion — that's within the spec.
 
 ## Design source
 

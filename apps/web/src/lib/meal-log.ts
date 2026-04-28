@@ -28,12 +28,14 @@ const EXT_FROM_TYPE: Record<string, string> = {
 /**
  * Upload the meal photo to Storage and write the meal doc to Firestore.
  *
- * Storage path: users/{uid}/meals/{mealId}.{ext}
+ * Storage path: mealPhotos/{uid}/{mealId}.{ext}
  * Firestore path: groups/{groupId}/meals/{mealId}
  *
- * Photos live in a uid-namespaced bucket (only the author can write); the
- * Firestore meal doc is gated on group membership and carries the download
- * URL, so non-author members see the photo by reading the meal doc.
+ * Photos live in a top-level mealPhotos/ namespace so a GCS lifecycle rule
+ * (lifecycle.json at the repo root) can delete them after 24 hours — only
+ * the author can write to their own subdirectory; any signed-in user can
+ * read while the URL is still live, since the URL itself is reachable only
+ * via Firestore meal docs that gate on group membership.
  */
 export async function logMeal(input: LogMealInput): Promise<LogMealResult> {
   const { db, storage } = getFirebase();
@@ -42,7 +44,7 @@ export async function logMeal(input: LogMealInput): Promise<LogMealResult> {
   const mealId = mealRef.id;
 
   const ext = EXT_FROM_TYPE[input.photo.mediaType] ?? 'jpg';
-  const path = `users/${input.uid}/meals/${mealId}.${ext}`;
+  const path = `mealPhotos/${input.uid}/${mealId}.${ext}`;
   const objectRef = storageRef(storage, path);
 
   await uploadBytes(objectRef, input.photo.blob, {
