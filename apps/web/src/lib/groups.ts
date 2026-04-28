@@ -1,11 +1,14 @@
 'use client';
 
 import {
+  arrayUnion,
   collection,
   doc,
+  getDoc,
   runTransaction,
   serverTimestamp,
   setDoc,
+  updateDoc,
 } from 'firebase/firestore';
 import { getFirebase } from './firebase';
 import { setCurrentGroup } from './user-profile';
@@ -82,4 +85,71 @@ export async function createGroupAndPact(input: CreateGroupInput): Promise<Creat
 
   await setCurrentGroup(input.uid, groupId);
   return { groupId, inviteCode };
+}
+
+export type JoinResult = {
+  groupId: string;
+  groupName: string;
+  alreadyMember: boolean;
+};
+
+/** Pull a code out of a pasted URL or accept it bare. Returns null if malformed. */
+export function normalizeInviteCode(raw: string): string | null {
+  const trimmed = raw.trim().toUpperCase();
+  if (!trimmed) return null;
+  // Last path segment handles "pact.app/join/HAYES-7K2", "https://pact.app/join/HAYES-7K2", or just "HAYES-7K2".
+  const lastSlash = trimmed.lastIndexOf('/');
+  const code = lastSlash >= 0 ? trimmed.slice(lastSlash + 1) : trimmed;
+  return /^[A-Z]+-[A-Z0-9]{2,}$/.test(code) ? code : null;
+}
+
+/**
+ * Look up an invite code, add the user to that group's memberUids, and set it
+ * as their currentGroupId. The Firestore rules cap groups at 6 members and
+ * only let non-members append their own uid (no other field changes), so
+ * arrayUnion + a single update is sufficient — no transaction needed.
+ */
+export async function joinGroupByCode(uid: string, codeRaw: string): Promise<JoinResult> {
+  const code = normalizeInviteCode(codeRaw);
+  if (!code) {
+    throw new Error("That doesn't look like an invite code. Try the link or the code at the end.");
+  }
+
+  const { db } = getFirebase();
+  const inviteSnap = await getDoc(doc(db, 'inviteCodes', code));
+  if (!inviteSnap.exists()) {
+    throw new Error("We don't recognize that code. Double-check it with whoever sent it.");
+  }
+
+  const { groupId } = inviteSnap.data() as { groupId: string };
+  const groupRef = doc(db, 'groups', groupId);
+
+  try {
+    await updateDoc(groupRef, {
+      memberUids: arrayUnion(uid),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    // Could be: already a member (the rule's size-grew-by-1 check fails because arrayUnion is a no-op),
+    // group is full (6 max), or some other permission issue. Try reading it — members can read.
+    const snap = await getDoc(groupRef).catch(() => null);
+    if (snap?.exists()) {
+      const data = snap.data() as { memberUids: string[]; name: string };
+      if (data.memberUids.includes(uid)) {
+        await setCurrentGroup(uid, groupId);
+        return { groupId, groupName: data.name, alreadyMember: true };
+      }
+    }
+    if (err instanceof Error && err.message.toLowerCase().includes('permission')) {
+      throw new Error('That pact is full (6 max).');
+    }
+    throw err;
+  }
+
+  await setCurrentGroup(uid, groupId);
+
+  // Now that we're a member, we can read the group.
+  const snap = await getDoc(groupRef);
+  const data = snap.data() as { name?: string };
+  return { groupId, groupName: data?.name ?? 'Your pact', alreadyMember: false };
 }

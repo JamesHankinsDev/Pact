@@ -84,7 +84,7 @@ export default function WelcomePage() {
           Make a pact
           <Icon name="arrow" size={16} color="#0a0a0a" strokeWidth={2.5} />
         </Link>
-        <Link href="/" className="btn btn-ghost-dark" style={{ padding: '14px 20px', fontSize: 14 }}>
+        <Link href="/onboarding/join" className="btn btn-ghost-dark" style={{ padding: '14px 20px', fontSize: 14 }}>
           I have an invite code
         </Link>
       </div>
