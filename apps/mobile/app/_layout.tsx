@@ -20,6 +20,7 @@ import {
 } from '@expo-google-fonts/jetbrains-mono';
 import 'react-native-reanimated';
 import { colors } from '@/constants/theme';
+import { AuthProvider } from '@/lib/auth-context';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -58,11 +59,14 @@ export default function RootLayout() {
   if (!fontsLoaded) return null;
 
   return (
-    <ThemeProvider value={pactDarkTheme}>
-      <Stack screenOptions={{ contentStyle: { backgroundColor: colors.ink } }}>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      </Stack>
-      <StatusBar style="light" />
-    </ThemeProvider>
+    <AuthProvider>
+      <ThemeProvider value={pactDarkTheme}>
+        <Stack screenOptions={{ contentStyle: { backgroundColor: colors.ink } }}>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="sign-in" options={{ headerShown: false, gestureEnabled: false }} />
+        </Stack>
+        <StatusBar style="light" />
+      </ThemeProvider>
+    </AuthProvider>
   );
 }

@@ -1,5 +1,12 @@
-import { useState } from 'react';
-import { ScrollView, View, Text, Pressable, StyleSheet } from 'react-native';
+import { useEffect, useState } from 'react';
+import {
+  ScrollView,
+  View,
+  Text,
+  Pressable,
+  StyleSheet,
+  ActivityIndicator,
+} from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import {
   AvatarStack,
@@ -11,21 +18,17 @@ import {
   type IconName,
 } from '@/components/primitives';
 import { colors } from '@/constants/theme';
-import { PACT_MEMBERS } from '@/lib/mock';
+import { useAuth } from '@/lib/auth-context';
+import { signOut } from '@/lib/auth';
+import { loadDashboardData, type DashboardData, type GroupMemberDoc } from '@/lib/group-data';
+import { currentISOWeek } from '@/lib/iso-week';
 
 const todayLabel = () => {
   const d = new Date();
   const day = d.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
-  return `${day} · WEEK ${isoWeek(d)}`;
+  const week = currentISOWeek(d).split('-W')[1];
+  return `${day} · WEEK ${week}`;
 };
-
-function isoWeek(d: Date): number {
-  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const dayNum = t.getUTCDay() || 7;
-  t.setUTCDate(t.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
-  return Math.ceil(((t.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-}
 
 type CheckItem = {
   id: string;
@@ -44,7 +47,40 @@ const CHECK_ITEMS: CheckItem[] = [
 ];
 
 export default function TodayScreen() {
+  const { profile } = useAuth();
   const [done, setDone] = useState<Record<string, boolean>>({ vitd: true, journal: true });
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+
+  const groupId = profile?.currentGroupId ?? null;
+
+  useEffect(() => {
+    if (!groupId) {
+      setData(null);
+      return;
+    }
+    let cancelled = false;
+    loadDashboardData(groupId)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setLoadErr(err instanceof Error ? err.message : 'Could not load your pact');
+      });
+    return () => { cancelled = true; };
+  }, [groupId]);
+
+  if (!groupId) return <NoGroupView profileName={profile?.displayName ?? 'there'} />;
+  if (loadErr) return <FullPageNote title="Couldn't load your pact" body={loadErr} />;
+  if (!data) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator color={colors.lime} />
+      </View>
+    );
+  }
+
+  const greetingName = (profile?.displayName ?? 'there').split(/\s+/)[0];
+  const stack = data.members.slice(0, 3).map((m) => ({ initials: m.initials, color: m.color }));
 
   return (
     <ScrollView
@@ -56,16 +92,12 @@ export default function TodayScreen() {
         <View style={styles.headerRow}>
           <View>
             <Eyebrow>{todayLabel()}</Eyebrow>
-            <Text style={styles.greeting}>Hey, James</Text>
+            <Text style={styles.greeting}>Hey, {greetingName}</Text>
           </View>
-          <AvatarStack
-            members={PACT_MEMBERS.slice(0, 3).map((m) => ({ initials: m.initials, color: m.color }))}
-            size={30}
-            dark
-          />
+          {stack.length > 0 && <AvatarStack members={stack} size={30} dark />}
         </View>
 
-        <StreakBanner />
+        <StreakBanner groupName={data.group.name} />
         <PactCard />
       </View>
 
@@ -101,20 +133,57 @@ export default function TodayScreen() {
 
 /* ── Streak banner ───────────────────────────────────────────────────── */
 
-function StreakBanner() {
+function StreakBanner({ groupName }: { groupName: string }) {
   return (
     <View style={styles.streakBanner}>
       <View>
-        <Text style={styles.streakEyebrow}>CREW STREAK</Text>
+        <Text style={styles.streakEyebrow}>{groupName.toUpperCase()}</Text>
         <View style={{ flexDirection: 'row', alignItems: 'baseline', marginTop: 2 }}>
           <Text style={styles.streakNumeral}>23</Text>
           <Text style={styles.streakUnit}>DAYS</Text>
         </View>
       </View>
       <View style={{ alignItems: 'flex-end' }}>
-        <Text style={styles.streakNote}>Sara hit her</Text>
-        <Text style={styles.streakNote}>protein goal</Text>
+        <Text style={styles.streakNote}>Crew is</Text>
+        <Text style={styles.streakNote}>all in</Text>
       </View>
+    </View>
+  );
+}
+
+/* ── No group / loading states ───────────────────────────────────────── */
+
+function NoGroupView({ profileName }: { profileName: string }) {
+  const first = profileName.split(/\s+/)[0];
+  return (
+    <ScrollView
+      style={{ flex: 1, backgroundColor: colors.ink }}
+      contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 28, gap: 18 }}
+    >
+      <Eyebrow>NO PACT YET</Eyebrow>
+      <Text style={styles.noGroupTitle}>You&rsquo;re not in a pact yet, {first}.</Text>
+      <Text style={styles.noGroupBody}>
+        Make one (or join one with an invite code) on the web app, then come back —
+        you&rsquo;ll land here automatically. Mobile-side onboarding is on the roadmap.
+      </Text>
+      <Pressable
+        onPress={() => signOut().catch(() => {})}
+        style={({ pressed }) => [
+          styles.signOutLink,
+          pressed && { opacity: 0.7 },
+        ]}
+      >
+        <Text style={styles.signOutText}>Sign out</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+function FullPageNote({ title, body }: { title: string; body?: string }) {
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.ink, alignItems: 'center', justifyContent: 'center', padding: 28 }}>
+      <Text style={[styles.noGroupTitle, { textAlign: 'center' }]}>{title}</Text>
+      {body && <Text style={[styles.noGroupBody, { textAlign: 'center', marginTop: 8 }]}>{body}</Text>}
     </View>
   );
 }
@@ -463,5 +532,31 @@ const styles = StyleSheet.create({
     color: 'rgba(245,243,238,0.5)',
     marginTop: 2,
     fontFamily: 'Inter_400Regular',
+  },
+  noGroupTitle: {
+    fontFamily: 'InterTight_800ExtraBold',
+    fontSize: 28,
+    color: colors.textOnDark,
+    letterSpacing: -1.12,
+    lineHeight: 32,
+  },
+  noGroupBody: {
+    fontFamily: 'Inter_400Regular',
+    fontSize: 14,
+    color: colors.textOnDarkMute,
+    lineHeight: 21,
+  },
+  signOutLink: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 9999,
+    marginTop: 8,
+  },
+  signOutText: {
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 13,
+    color: colors.textOnDark,
   },
 });
