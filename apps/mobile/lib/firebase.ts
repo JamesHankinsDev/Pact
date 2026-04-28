@@ -9,6 +9,7 @@ import {
   type Auth,
 } from 'firebase/auth';
 import { getFirestore, type Firestore } from 'firebase/firestore';
+import { getStorage, type FirebaseStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const config = {
@@ -23,12 +24,18 @@ const config = {
 let app: FirebaseApp | undefined;
 let auth: Auth | undefined;
 let db: Firestore | undefined;
+let storage: FirebaseStorage | undefined;
 
 export function isFirebaseConfigured(): boolean {
   return Boolean(config.apiKey);
 }
 
-export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
+export function getFirebase(): {
+  app: FirebaseApp;
+  auth: Auth;
+  db: Firestore;
+  storage: FirebaseStorage;
+} {
   if (!config.apiKey) {
     throw new Error(
       'Firebase config missing — set EXPO_PUBLIC_FIREBASE_* env vars in apps/mobile/.env',
@@ -46,6 +53,7 @@ export function getFirebase(): { app: FirebaseApp; auth: Auth; db: Firestore } {
       auth = getAuth(app);
     }
     db = getFirestore(app);
+    storage = getStorage(app);
   }
-  return { app, auth: auth!, db: db! };
+  return { app, auth: auth!, db: db!, storage: storage! };
 }
