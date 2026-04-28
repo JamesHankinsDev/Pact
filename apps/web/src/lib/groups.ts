@@ -11,9 +11,32 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { getFirebase } from './firebase';
-import { setCurrentGroup } from './user-profile';
+import { getUserProfile, setCurrentGroup, type UserProfile } from './user-profile';
 import { currentISOWeek } from './iso-week';
 import type { PactCommitment } from '@pact/types';
+
+export type GroupMemberDoc = {
+  uid: string;
+  name: string;
+  initials: string;
+  color: string;
+  joinedAt: number;
+};
+
+async function writeMemberSnapshot(
+  uid: string,
+  groupId: string,
+  profile: UserProfile,
+): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, 'groups', groupId, 'members', uid), {
+    uid,
+    name: profile.displayName,
+    initials: profile.initials,
+    color: profile.color,
+    joinedAt: serverTimestamp(),
+  });
+}
 
 const PACT_PREFIXES = ['HAYES', 'KEMP', 'NORTH', 'OAK', 'IRON', 'PINE', 'WOLF', 'ASH'];
 
@@ -83,6 +106,9 @@ export async function createGroupAndPact(input: CreateGroupInput): Promise<Creat
     signedAt: serverTimestamp(),
   });
 
+  const profile = await getUserProfile(input.uid);
+  if (profile) await writeMemberSnapshot(input.uid, groupId, profile);
+
   await setCurrentGroup(input.uid, groupId);
   return { groupId, inviteCode };
 }
@@ -145,6 +171,9 @@ export async function joinGroupByCode(uid: string, codeRaw: string): Promise<Joi
     }
     throw err;
   }
+
+  const profile = await getUserProfile(uid);
+  if (profile) await writeMemberSnapshot(uid, groupId, profile);
 
   await setCurrentGroup(uid, groupId);
 

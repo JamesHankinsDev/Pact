@@ -1,6 +1,6 @@
-import Link from 'next/link';
 import { AvatarStack, Brand, Card, Chip, Eyebrow, Icon, StatNumeral } from '@/components/primitives';
 import { HomeAuthBar } from '@/components/HomeAuthBar';
+import { HomeCtas } from '@/components/HomeCtas';
 
 const CREW = [
   { initials: 'J', color: '#daff3f' },
@@ -68,15 +68,10 @@ export default function Home() {
           </div>
         </Card>
 
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <Link href="/onboarding" className="btn btn-lime" style={{ padding: '14px 20px', fontSize: 14 }}>
-            Try the onboarding flow
-            <Icon name="arrow" size={14} color="#0a0a0a" strokeWidth={2.5} />
-          </Link>
-        </div>
+        <HomeCtas />
 
         <footer style={{ color: 'var(--text-on-dark-faint)', fontSize: 12 }}>
-          Next up: D1 desktop dashboard, then the Expo mobile app.
+          Next up: the Expo mobile app.
         </footer>
       </div>
     </main>

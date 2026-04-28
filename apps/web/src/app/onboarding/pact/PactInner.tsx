@@ -47,7 +47,7 @@ export function PactInner() {
       });
       clearPersistedOnboarding();
       setCommitState('done');
-      router.replace('/');
+      router.replace('/dashboard');
     } catch (err) {
       setCommitState('error');
       setError(err instanceof Error ? err.message : 'Could not save your pact');

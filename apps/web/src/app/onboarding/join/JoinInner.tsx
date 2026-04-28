@@ -33,7 +33,7 @@ export function JoinInner() {
           alreadyMember: result.alreadyMember,
           groupName: result.groupName,
         });
-        setTimeout(() => router.replace('/'), 900);
+        setTimeout(() => router.replace('/dashboard'), 900);
       } catch (err) {
         setState({
           status: 'error',
