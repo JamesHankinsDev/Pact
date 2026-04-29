@@ -7,6 +7,12 @@ import { getFirebase } from './firebase';
 // Required so the web-browser-based OAuth flow finishes when the redirect lands.
 WebBrowser.maybeCompleteAuthSession();
 
+// Google OAuth requires a *platform-specific* client ID on each platform.
+// The web client ID is only valid for browser flows; iOS/Android need OAuth
+// clients tied to the bundle ID / package name (Firebase Console → ⚙️ →
+// Project Settings → Your apps → Add app generates these automatically).
+const IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
+const ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID;
 const WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
 
 /**
@@ -19,15 +25,18 @@ export function useGoogleSignIn(): {
   isReady: boolean;
 } {
   const [request, , promptAsync] = Google.useAuthRequest({
-    clientId: WEB_CLIENT_ID,
-    iosClientId: WEB_CLIENT_ID,
-    androidClientId: WEB_CLIENT_ID,
+    iosClientId: IOS_CLIENT_ID,
+    androidClientId: ANDROID_CLIENT_ID,
     webClientId: WEB_CLIENT_ID,
   });
 
   const signIn = useCallback(async () => {
-    if (!WEB_CLIENT_ID) {
-      return { ok: false, error: 'Google OAuth not configured. Set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID in .env.' };
+    if (!IOS_CLIENT_ID && !ANDROID_CLIENT_ID && !WEB_CLIENT_ID) {
+      return {
+        ok: false,
+        error:
+          'Google OAuth not configured. Set EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID (and/or ANDROID/WEB) in apps/mobile/.env.',
+      };
     }
     try {
       const result = await promptAsync();
