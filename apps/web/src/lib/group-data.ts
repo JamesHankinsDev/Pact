@@ -13,7 +13,10 @@ import {
 } from 'firebase/firestore';
 import { getFirebase } from './firebase';
 import type { GroupMemberDoc } from './groups';
+import { workoutFromSnap, type WorkoutRecord } from './workouts';
 import type { Macros, MealParseItem, PactCommitment } from '@pact/types';
+
+export type { WorkoutRecord };
 
 export type DashboardGroup = {
   id: string;
@@ -58,6 +61,8 @@ export type DashboardData = {
   members: GroupMemberDoc[];
   /** Last 7 days of meals across the whole group, newest first. */
   meals: MealRecord[];
+  /** Last 7 days of workouts across the whole group, newest first. */
+  workouts: WorkoutRecord[];
   /** This week's signed pact, if any. */
   pact: WeekPactRecord | null;
   /** Latest inventory items, newest first (capped at 20). */
@@ -79,7 +84,7 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
   const sinceMs = Date.now() - MEALS_LOOKBACK_MS;
   const sinceTs = Timestamp.fromMillis(sinceMs);
 
-  const [membersSnap, mealsSnap, pactSnap, inventorySnap] = await Promise.all([
+  const [membersSnap, mealsSnap, pactSnap, inventorySnap, workoutsSnap] = await Promise.all([
     getDocs(query(collection(db, 'groups', groupId, 'members'), orderBy('joinedAt', 'asc'))),
     getDocs(
       query(
@@ -95,6 +100,14 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
         collection(db, 'groups', groupId, 'inventory'),
         orderBy('addedAt', 'desc'),
         limit(20),
+      ),
+    ),
+    getDocs(
+      query(
+        collection(db, 'groups', groupId, 'workouts'),
+        where('loggedAt', '>=', sinceTs),
+        orderBy('loggedAt', 'desc'),
+        limit(MEALS_HARD_LIMIT),
       ),
     ),
   ]);
@@ -160,7 +173,9 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
       })()
     : null;
 
-  return { group, members, meals, pact, inventory };
+  const workouts: WorkoutRecord[] = workoutsSnap.docs.map((d) => workoutFromSnap(d));
+
+  return { group, members, meals, workouts, pact, inventory };
 }
 
 /** Sum macros across a list of meals. */

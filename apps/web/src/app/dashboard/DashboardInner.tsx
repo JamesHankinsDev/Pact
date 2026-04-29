@@ -17,6 +17,7 @@ import {
   type DashboardData,
   type InventoryRecord,
   type MealRecord,
+  type WorkoutRecord,
 } from '@/lib/group-data';
 import styles from './dashboard.module.css';
 import type { GroupMemberDoc } from '@/lib/groups';
@@ -58,7 +59,7 @@ export function DashboardInner() {
 /* ── Main dashboard ──────────────────────────────────────────────────── */
 
 function Dashboard({ data }: { data: DashboardData }) {
-  const { group, members, meals, inventory } = data;
+  const { group, members, meals, inventory, workouts } = data;
   const week = formatWeekRange(group.currentWeek);
   const dayNums = weekDayNumbers(group.currentWeek);
   const todayIdx = todayIndexInWeek(group.currentWeek);
@@ -86,6 +87,7 @@ function Dashboard({ data }: { data: DashboardData }) {
         <WeekGrid
           members={members}
           meals={meals}
+          workouts={workouts}
           dayNums={dayNums}
           todayIdx={todayIdx}
           isoWeek={group.currentWeek}
@@ -290,17 +292,28 @@ type Activity = { color: ActivityColor; kind: ActivityKind };
 
 /**
  * Build the per-day activity for one member from real Firestore data.
- * Right now only meals are wired (sky/bowl pill) — workouts/practices/PRs
- * will fill in as those modules land.
+ * Wired modules: workouts (lime/dumbbell), meals (sky/bowl). Practices and
+ * PRs will fill in as those modules land.
  */
-function memberWeekActivity(memberUid: string, weekDayStarts: number[], meals: MealRecord[]): Activity[][] {
+function memberWeekActivity(
+  memberUid: string,
+  weekDayStarts: number[],
+  meals: MealRecord[],
+  workouts: WorkoutRecord[],
+): Activity[][] {
   const dayMs = 24 * 60 * 60 * 1000;
   return weekDayStarts.map((start) => {
     const end = start + dayMs;
-    const memberMealsThatDay = meals.filter(
+    const dayMeals = meals.filter(
       (m) => m.memberId === memberUid && m.loggedAt >= start && m.loggedAt < end,
     );
-    return memberMealsThatDay.length > 0 ? [{ color: 'sky', kind: 'bowl' }] : [];
+    const dayWorkouts = workouts.filter(
+      (w) => w.memberId === memberUid && w.loggedAt >= start && w.loggedAt < end,
+    );
+    const pills: Activity[] = [];
+    if (dayWorkouts.length > 0) pills.push({ color: 'lime', kind: 'dumbbell' });
+    if (dayMeals.length > 0) pills.push({ color: 'sky', kind: 'bowl' });
+    return pills;
   });
 }
 
@@ -350,12 +363,14 @@ function ActivityPill({ activity }: { activity: Activity }) {
 function WeekGrid({
   members,
   meals,
+  workouts,
   dayNums,
   todayIdx,
   isoWeek,
 }: {
   members: GroupMemberDoc[];
   meals: MealRecord[];
+  workouts: WorkoutRecord[];
   dayNums: number[];
   todayIdx: number;
   isoWeek: string;
@@ -433,7 +448,7 @@ function WeekGrid({
         </div>
 
         {members.slice(0, 6).map((m, idx) => {
-          const schedule = memberWeekActivity(m.uid, dayStarts, meals);
+          const schedule = memberWeekActivity(m.uid, dayStarts, meals, workouts);
           const completed = schedule.filter((day) => day.length > 0).length;
           return (
             <div

@@ -14,10 +14,16 @@ export function HomeCtas() {
   return (
     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
       {inAGroup ? (
-        <Link href="/dashboard" className="btn btn-lime" style={{ padding: '14px 20px', fontSize: 14 }}>
-          View your dashboard
-          <Icon name="arrow" size={14} color="#0a0a0a" strokeWidth={2.5} />
-        </Link>
+        <>
+          <Link href="/dashboard" className="btn btn-lime" style={{ padding: '14px 20px', fontSize: 14 }}>
+            View your dashboard
+            <Icon name="arrow" size={14} color="#0a0a0a" strokeWidth={2.5} />
+          </Link>
+          <Link href="/workout" className="btn btn-ghost-dark" style={{ padding: '14px 20px', fontSize: 14 }}>
+            <Icon name="dumbbell" size={14} color="var(--text-on-dark)" />
+            Log a workout
+          </Link>
+        </>
       ) : (
         <>
           <Link href="/onboarding" className="btn btn-lime" style={{ padding: '14px 20px', fontSize: 14 }}>
