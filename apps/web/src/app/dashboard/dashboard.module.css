@@ -1,0 +1,103 @@
+/* Dashboard layout — D1 was designed at 1280×820. Below 1024px we stack the
+ * 3-column grids and reflow the top bar, so a phone or tablet viewport
+ * gets a coherent vertical layout instead of an overflowing desktop grid. */
+
+.shell {
+  background: var(--ink);
+  color: var(--text-on-dark);
+  min-height: 100dvh;
+}
+
+.body {
+  padding: 20px 16px;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.topBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.topBarLeft {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.topBarRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.weekLabel {
+  display: none;
+}
+
+.heroGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.bottomGrid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+/* Week grid: 120px member col + 7 day cols stays at desktop sizing, but on
+ * narrow viewports we let the inner card scroll horizontally inside its
+ * outer wrapper instead of squashing day cells into illegibility. */
+.weekGridScroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 22px;
+}
+.weekGridScroll > * {
+  min-width: 720px;
+}
+
+@media (min-width: 1024px) {
+  .body {
+    padding: 28px 32px;
+  }
+  .topBar {
+    padding: 20px 32px;
+    gap: 16px;
+    flex-wrap: nowrap;
+  }
+  .topBarLeft {
+    gap: 28px;
+  }
+  .topBarRight {
+    gap: 16px;
+    flex-wrap: nowrap;
+  }
+  .weekLabel {
+    display: inline;
+  }
+  .heroGrid {
+    grid-template-columns: 1.7fr 1fr 1fr;
+    gap: 16px;
+  }
+  .bottomGrid {
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+  }
+  .weekGridScroll {
+    overflow-x: visible;
+  }
+  .weekGridScroll > * {
+    min-width: 0;
+  }
+}

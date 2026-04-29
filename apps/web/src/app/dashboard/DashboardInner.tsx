@@ -18,6 +18,7 @@ import {
   type InventoryRecord,
   type MealRecord,
 } from '@/lib/group-data';
+import styles from './dashboard.module.css';
 import type { GroupMemberDoc } from '@/lib/groups';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -71,9 +72,9 @@ function Dashboard({ data }: { data: DashboardData }) {
   );
 
   return (
-    <div style={{ background: 'var(--ink)', color: 'var(--text-on-dark)', minHeight: '100dvh' }}>
+    <div className={styles.shell}>
       <TopBar week={week} stackMembers={stackMembers} />
-      <div style={{ padding: '28px 32px', maxWidth: 1440, margin: '0 auto' }}>
+      <div className={styles.body}>
         <HeroStrip
           group={group}
           members={members}
@@ -105,18 +106,8 @@ function TopBar({
   stackMembers: Array<{ initials: string; color: string }>;
 }) {
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '20px 32px',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
-        gap: 16,
-        flexWrap: 'wrap',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 28 }}>
+    <div className={styles.topBar}>
+      <div className={styles.topBarLeft}>
         <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
           <div
             style={{
@@ -166,9 +157,9 @@ function TopBar({
           })}
         </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <div className={styles.topBarRight}>
         <span
-          className="mono"
+          className={`mono ${styles.weekLabel}`}
           style={{
             fontSize: 11,
             color: 'var(--text-on-dark-faint)',
@@ -204,14 +195,7 @@ function HeroStrip({
 }) {
   const stack = members.slice(0, 4).map((m) => ({ initials: m.initials, color: m.color }));
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '1.7fr 1fr 1fr',
-        gap: 16,
-        marginBottom: 18,
-      }}
-    >
+    <div className={styles.heroGrid}>
       <div
         style={{
           background: 'var(--lime)',
@@ -401,6 +385,7 @@ function WeekGrid({
         </div>
       </div>
 
+      <div className={styles.weekGridScroll}>
       <Card padded={false} style={{ overflow: 'hidden' }}>
         <div
           style={{
@@ -503,6 +488,7 @@ function WeekGrid({
           );
         })}
       </Card>
+      </div>
     </div>
   );
 }
@@ -533,7 +519,7 @@ function BottomRow({
   inventory: InventoryRecord[];
 }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+    <div className={styles.bottomGrid}>
       <Card>
         <div
           style={{

@@ -31,8 +31,8 @@ export default function Home() {
             style={{
               fontFamily: 'var(--f-display)',
               fontWeight: 800,
-              fontSize: 56,
-              lineHeight: 1.0,
+              fontSize: 'clamp(36px, 9vw, 56px)',
+              lineHeight: 1.05,
               letterSpacing: '-0.025em',
               margin: 0,
             }}
