@@ -6,7 +6,9 @@ import Link from 'next/link';
 import { Brand, Eyebrow } from '@/components/primitives';
 import { completeMagicLink, pendingMagicLinkUrl } from '@/lib/auth';
 
-type Status = 'pending' | 'completing' | 'done' | 'error';
+type Status = 'pending' | 'redirecting-to-app' | 'completing' | 'done' | 'error';
+
+const MOBILE_URL_SCHEMES = ['exp://', 'exp+pact://', 'pact://'];
 
 export default function AuthFinishPage() {
   const router = useRouter();
@@ -14,6 +16,20 @@ export default function AuthFinishPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // If the request originated from mobile (sendMagicLink set ?mobile=<deep-link>),
+    // bounce the verified token back into the mobile app's URL scheme. The
+    // mobile app's Linking listener then completes sign-in via signInWithEmailLink.
+    const params = new URLSearchParams(window.location.search);
+    const mobile = params.get('mobile');
+    if (mobile && MOBILE_URL_SCHEMES.some((s) => mobile.startsWith(s))) {
+      params.delete('mobile');
+      const sep = mobile.includes('?') ? '&' : '?';
+      const target = `${mobile}${sep}${params.toString()}`;
+      setStatus('redirecting-to-app');
+      window.location.replace(target);
+      return;
+    }
+
     const link = pendingMagicLinkUrl();
     if (!link) {
       setStatus('error');
@@ -66,6 +82,7 @@ export default function AuthFinishPage() {
             }}
           >
             {status === 'completing' && 'Signing you in…'}
+            {status === 'redirecting-to-app' && 'Opening Pact…'}
             {status === 'done' && 'You’re in.'}
             {status === 'error' && 'Something went wrong.'}
             {status === 'pending' && 'Checking your link…'}

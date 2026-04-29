@@ -1,61 +1,72 @@
-import { useCallback } from 'react';
-import * as Google from 'expo-auth-session/providers/google';
-import * as WebBrowser from 'expo-web-browser';
-import { GoogleAuthProvider, signInWithCredential, signOut as fbSignOut } from 'firebase/auth';
+import {
+  isSignInWithEmailLink,
+  sendSignInLinkToEmail,
+  signInWithEmailLink,
+  signOut as fbSignOut,
+} from 'firebase/auth';
+import * as Linking from 'expo-linking';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getFirebase } from './firebase';
 
-// Required so the web-browser-based OAuth flow finishes when the redirect lands.
-WebBrowser.maybeCompleteAuthSession();
+const EMAIL_KEY = 'pact:emailForSignIn';
 
-// Google OAuth requires a *platform-specific* client ID on each platform.
-// The web client ID is only valid for browser flows; iOS/Android need OAuth
-// clients tied to the bundle ID / package name (Firebase Console → ⚙️ →
-// Project Settings → Your apps → Add app generates these automatically).
-const IOS_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
-const ANDROID_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID;
-const WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+const API_BASE =
+  process.env.EXPO_PUBLIC_API_BASE_URL?.replace(/\/$/, '') ?? 'http://localhost:3000';
 
 /**
- * Hook-based Google sign-in. Returns `{ signIn, isReady }`. Call signIn()
- * from a press handler — opens the system browser/in-app browser to Google,
- * then exchanges the id_token for a Firebase credential.
+ * Send a sign-in link to `email`. The link's actionUrl points at the web
+ * /auth/finish page with a `mobile=<deep-link>` query param. When the user
+ * taps the email link, Firebase validates the token, bounces to the web
+ * page, and the web page redirects into the mobile deep-link scheme. The
+ * mobile app catches that URL via `Linking.addEventListener('url', ...)`
+ * and finishes sign-in by calling `tryCompleteMagicLink(url)`.
+ *
+ * The bounce through web is required because Firebase only accepts HTTPS
+ * (or localhost) hosts in its Authorized domains list, and our deep link
+ * scheme (`exp://` in dev, `pact://` in EAS builds) isn't HTTPS.
  */
-export function useGoogleSignIn(): {
-  signIn: () => Promise<{ ok: boolean; error?: string }>;
-  isReady: boolean;
-} {
-  const [request, , promptAsync] = Google.useAuthRequest({
-    iosClientId: IOS_CLIENT_ID,
-    androidClientId: ANDROID_CLIENT_ID,
-    webClientId: WEB_CLIENT_ID,
-  });
+export async function sendMagicLink(email: string): Promise<void> {
+  const { auth } = getFirebase();
+  const mobileReturnUrl = Linking.createURL('/auth/finish');
+  const actionUrl = `${API_BASE}/auth/finish?mobile=${encodeURIComponent(mobileReturnUrl)}`;
+  await sendSignInLinkToEmail(auth, email, { url: actionUrl, handleCodeInApp: true });
+  await AsyncStorage.setItem(EMAIL_KEY, email);
+}
 
-  const signIn = useCallback(async () => {
-    if (!IOS_CLIENT_ID && !ANDROID_CLIENT_ID && !WEB_CLIENT_ID) {
-      return {
-        ok: false,
-        error:
-          'Google OAuth not configured. Set EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID (and/or ANDROID/WEB) in apps/mobile/.env.',
-      };
-    }
-    try {
-      const result = await promptAsync();
-      if (result.type !== 'success') {
-        return { ok: false, error: result.type === 'cancel' ? 'Cancelled' : 'Sign-in failed' };
-      }
-      const idToken = result.params.id_token ?? result.authentication?.idToken;
-      if (!idToken) return { ok: false, error: 'No id_token returned from Google' };
+/**
+ * If `url` is a Firebase email-link sign-in URL, complete sign-in.
+ * Returns `{ ok: true }` on success, `{ ok: false }` if the URL isn't a
+ * sign-in link, or `{ ok: false, error }` on failure.
+ *
+ * On success, AsyncStorage's email key is cleared and Firebase's
+ * onAuthStateChanged fires — the AuthProvider picks that up and the
+ * sign-in screen redirects via its existing <Redirect> guard.
+ */
+export async function tryCompleteMagicLink(
+  url: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const { auth } = getFirebase();
+  if (!isSignInWithEmailLink(auth, url)) return { ok: false };
 
-      const { auth } = getFirebase();
-      const credential = GoogleAuthProvider.credential(idToken);
-      await signInWithCredential(auth, credential);
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'Sign-in failed' };
-    }
-  }, [promptAsync]);
+  const email = await AsyncStorage.getItem(EMAIL_KEY);
+  if (!email) {
+    return {
+      ok: false,
+      error: 'No saved email. Request a fresh link from this device.',
+    };
+  }
 
-  return { signIn, isReady: !!request };
+  try {
+    await signInWithEmailLink(auth, email, url);
+    await AsyncStorage.removeItem(EMAIL_KEY);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Sign-in failed' };
+  }
+}
+
+export async function clearPendingEmail(): Promise<void> {
+  await AsyncStorage.removeItem(EMAIL_KEY);
 }
 
 export async function signOut() {
