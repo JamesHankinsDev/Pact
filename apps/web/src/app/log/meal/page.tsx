@@ -5,11 +5,11 @@ import Link from 'next/link';
 import { Brand, Card, Eyebrow, Icon, StatNumeral } from '@/components/primitives';
 import { useAuth } from '@/lib/auth-context';
 import { getFirebase } from '@/lib/firebase';
-import { saveReceipt } from '@/lib/inventory';
-import type { ReceiptParseResult } from '@pact/types';
+import { logMeal } from '@/lib/meal-log';
+import type { MealParseResult } from '@pact/types';
 
 type ParsedSlot = {
-  result: ReceiptParseResult;
+  result: MealParseResult;
   preview: string;
   blob: Blob;
   mediaType: string;
@@ -20,13 +20,13 @@ type State =
   | { status: 'uploading' }
   | { status: 'analyzing' }
   | { status: 'done'; parsed: ParsedSlot }
-  | { status: 'saving'; parsed: ParsedSlot }
-  | { status: 'saved'; parsed: ParsedSlot; receiptId: string; count: number }
+  | { status: 'logging'; parsed: ParsedSlot }
+  | { status: 'logged'; parsed: ParsedSlot; mealId: string }
   | { status: 'error'; message: string };
 
 const ALLOWED = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
-export default function ReceiptVisionDevPage() {
+export default function MealVisionDevPage() {
   const { user, profile, loading } = useAuth();
   const [state, setState] = useState<State>({ status: 'idle' });
 
@@ -36,10 +36,7 @@ export default function ReceiptVisionDevPage() {
       return;
     }
     if (file.size > 10 * 1024 * 1024) {
-      setState({
-        status: 'error',
-        message: `Image is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Limit is 10 MB.`,
-      });
+      setState({ status: 'error', message: `Image is too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Limit is 10 MB.` });
       return;
     }
 
@@ -53,7 +50,7 @@ export default function ReceiptVisionDevPage() {
       const idToken = await auth.currentUser?.getIdToken();
       if (!idToken) throw new Error('Not signed in');
 
-      const res = await fetch('/api/vision/receipt', {
+      const res = await fetch('/api/vision/meal', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -61,70 +58,71 @@ export default function ReceiptVisionDevPage() {
         },
         body: JSON.stringify({ imageBase64: base64, imageMediaType: file.type }),
       });
+
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      const result = (await res.json()) as ReceiptParseResult;
-      setState({ status: 'done', parsed: { result, preview, blob: file, mediaType: file.type } });
+
+      const result = (await res.json()) as MealParseResult;
+      setState({
+        status: 'done',
+        parsed: { result, preview, blob: file, mediaType: file.type },
+      });
     } catch (err) {
       setState({ status: 'error', message: err instanceof Error ? err.message : 'Request failed' });
     }
   };
 
-  const handleSave = async () => {
+  const handleLog = async () => {
     if (state.status !== 'done') return;
     if (!user || !profile?.currentGroupId) {
-      setState({ status: 'error', message: 'You need to be in a pact to add to inventory.' });
+      setState({
+        status: 'error',
+        message: 'You need to be in a pact to log a meal — make or join one first.',
+      });
       return;
     }
-    setState({ status: 'saving', parsed: state.parsed });
+
+    setState({ status: 'logging', parsed: state.parsed });
     try {
-      const { receiptId, count } = await saveReceipt({
+      const { mealId } = await logMeal({
         uid: user.uid,
         groupId: profile.currentGroupId,
         parsed: state.parsed.result,
+        photo: { blob: state.parsed.blob, mediaType: state.parsed.mediaType },
       });
-      setState({ status: 'saved', parsed: state.parsed, receiptId, count });
+      setState({ status: 'logged', parsed: state.parsed, mealId });
     } catch (err) {
-      setState({ status: 'error', message: err instanceof Error ? err.message : 'Could not save inventory' });
+      setState({ status: 'error', message: err instanceof Error ? err.message : 'Could not save meal' });
     }
   };
 
   return (
-    <main style={pageStyle}>
+    <main style={{ minHeight: '100dvh', background: 'var(--ink)', color: 'var(--text-on-dark)', padding: '40px 24px' }}>
       <div style={{ maxWidth: 720, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Brand />
-          <Link href="/" style={{ ...mono, color: 'var(--text-on-dark-mute)', textDecoration: 'none' }}>
+          <Link href="/dashboard" style={{ ...mono, color: 'var(--text-on-dark-mute)', textDecoration: 'none' }}>
             ← BACK
           </Link>
         </header>
 
         <div>
-          <Eyebrow>DEV · RECEIPT VISION</Eyebrow>
-          <h1 style={{ ...display, fontSize: 32, fontWeight: 700, marginTop: 6, marginBottom: 6 }}>
-            Try the receipt parser.
+          <Eyebrow>LOG A MEAL</Eyebrow>
+          <h1 style={{ ...display, fontSize: 'clamp(28px, 7vw, 32px)', fontWeight: 700, marginTop: 6, marginBottom: 6 }}>
+            What did you eat?
           </h1>
           <p style={{ fontSize: 13, color: 'var(--text-on-dark-mute)', margin: 0, lineHeight: 1.5 }}>
-            Drop in a grocery receipt photo. We send it to{' '}
-            <code>POST /api/vision/receipt</code>, which calls Claude Opus 4.7 with adaptive
-            thinking and returns structured line items. Saving writes each item as its own
-            doc under <code>groups/{'{id}'}/inventory</code>.
+            Drop in a meal photo. We&rsquo;ll estimate macros and log it to your pact. The photo
+            is cleared after 24 hours; the macros stay.
           </p>
         </div>
 
         {!loading && !user && (
           <Card>
             <p style={{ fontSize: 13, margin: 0 }}>
-              You need to{' '}
-              <Link
-                href={`/auth?next=${encodeURIComponent('/dev/receipt-vision')}`}
-                style={{ color: 'var(--lime)' }}
-              >
-                sign in
-              </Link>{' '}
-              first.
+              You need to <Link href={`/auth?next=${encodeURIComponent('/log/meal')}`} style={{ color: 'var(--lime)' }}>sign in</Link> first.
             </p>
           </Card>
         )}
@@ -136,27 +134,25 @@ export default function ReceiptVisionDevPage() {
               disabled={
                 state.status === 'uploading' ||
                 state.status === 'analyzing' ||
-                state.status === 'saving'
+                state.status === 'logging'
               }
             />
 
             {state.status === 'uploading' && <Pulse label="Reading file…" />}
             {state.status === 'analyzing' && <Pulse label="Asking Claude…" />}
-            {state.status === 'saving' && <Pulse label="Adding to your pantry…" />}
+            {state.status === 'logging' && <Pulse label="Saving to your pact…" />}
             {state.status === 'error' && (
               <Card style={{ borderColor: 'rgba(255,107,74,0.3)', background: 'rgba(255,107,74,0.08)' }}>
                 <Eyebrow color="var(--coral)">ERROR</Eyebrow>
-                <p style={{ fontSize: 13, marginTop: 6, marginBottom: 0, color: 'var(--coral)' }}>
-                  {state.message}
-                </p>
+                <p style={{ fontSize: 13, marginTop: 6, marginBottom: 0, color: 'var(--coral)' }}>{state.message}</p>
               </Card>
             )}
-            {(state.status === 'done' || state.status === 'saving' || state.status === 'saved') && (
+            {(state.status === 'done' || state.status === 'logging' || state.status === 'logged') && (
               <Result
                 result={state.parsed.result}
                 preview={state.parsed.preview}
-                onSave={state.status === 'done' ? handleSave : undefined}
-                saved={state.status === 'saved' ? { receiptId: state.receiptId, count: state.count } : undefined}
+                onLog={state.status === 'done' ? handleLog : undefined}
+                logged={state.status === 'logged' ? state.mealId : undefined}
                 inGroup={!!profile?.currentGroupId}
               />
             )}
@@ -166,8 +162,6 @@ export default function ReceiptVisionDevPage() {
     </main>
   );
 }
-
-/* ── Subcomponents ──────────────────────────────────────────────────── */
 
 function FileDrop({ onFile, disabled }: { onFile: (f: File) => void; disabled: boolean }) {
   return (
@@ -206,9 +200,9 @@ function FileDrop({ onFile, disabled }: { onFile: (f: File) => void; disabled: b
           marginBottom: 12,
         }}
       >
-        <Icon name="cart" size={26} color="var(--lime)" />
+        <Icon name="camera" size={26} color="var(--lime)" />
       </div>
-      <div style={{ ...display, fontSize: 18, fontWeight: 700 }}>Drop a receipt photo here</div>
+      <div style={{ ...display, fontSize: 18, fontWeight: 700 }}>Drop a meal photo here</div>
       <div style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', marginTop: 4 }}>
         JPEG, PNG, GIF, or WebP up to 10 MB
       </div>
@@ -243,81 +237,56 @@ function Pulse({ label }: { label: string }) {
 function Result({
   result,
   preview,
-  onSave,
-  saved,
+  onLog,
+  logged,
   inGroup,
 }: {
-  result: ReceiptParseResult;
+  result: MealParseResult;
   preview: string;
-  onSave?: () => void;
-  saved?: { receiptId: string; count: number };
+  onLog?: () => void;
+  logged?: string;
   inGroup: boolean;
 }) {
-  const subtotal = result.subtotal ?? null;
-  const total = result.total ?? null;
-  const itemCount = result.items.length;
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div
-        style={{
-          borderRadius: 16,
-          overflow: 'hidden',
-          border: '1px solid rgba(255,255,255,0.06)',
-        }}
-      >
+      <div style={{ borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.06)' }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={preview}
-          alt="receipt"
-          style={{ display: 'block', width: '100%', maxHeight: 360, objectFit: 'contain', background: 'var(--ink-card)' }}
-        />
+        <img src={preview} alt="meal" style={{ display: 'block', width: '100%', maxHeight: 320, objectFit: 'cover' }} />
       </div>
 
       <Card>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-          <div>
-            <Eyebrow>{result.store ? result.store.toUpperCase() : 'RECEIPT'}</Eyebrow>
-            <StatNumeral value={itemCount} unit={itemCount === 1 ? 'ITEM' : 'ITEMS'} size={48} />
-          </div>
-          <div style={{ ...mono, fontSize: 12, color: 'var(--text-on-dark-mute)', textAlign: 'right' }}>
-            {subtotal != null && <div>Subtotal · ${subtotal.toFixed(2)}</div>}
-            {total != null && <div>Total · ${total.toFixed(2)}</div>}
+        <Eyebrow>TOTAL</Eyebrow>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: 6 }}>
+          <StatNumeral value={Math.round(result.totals.calories)} unit="KCAL" size={48} />
+          <div style={{ ...mono, fontSize: 12, color: 'var(--text-on-dark-mute)' }}>
+            {Math.round(result.totals.proteinG)}P · {Math.round(result.totals.carbsG)}C · {Math.round(result.totals.fatG)}F
           </div>
         </div>
       </Card>
 
       <Card>
-        <Eyebrow>LINE ITEMS</Eyebrow>
-        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {result.items.length === 0 ? (
-            <p style={{ fontSize: 13, color: 'var(--text-on-dark-mute)', margin: 0 }}>
-              Nothing parseable.
-            </p>
-          ) : (
-            result.items.map((it, i) => (
-              <div
-                key={i}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  gap: 12,
-                  paddingBottom: 6,
-                  borderBottom:
-                    i < result.items.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 500 }}>{it.name}</div>
-                  <div style={{ ...mono, fontSize: 11, color: 'var(--text-on-dark-mute)' }}>
-                    {it.quantity} {it.unit}
-                  </div>
-                </div>
-                <div style={{ ...mono, fontSize: 13, color: 'var(--lime)' }}>
-                  {it.estCost != null ? `$${it.estCost.toFixed(2)}` : '—'}
+        <Eyebrow>DETECTED ITEMS · {result.items.length}</Eyebrow>
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {result.items.map((it, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{it.name}</div>
+                <div style={{ ...mono, fontSize: 11, color: 'var(--text-on-dark-mute)' }}>
+                  {it.portion ?? `${it.grams ?? '?'} g`}
                 </div>
               </div>
-            ))
+              <div style={{ ...mono, fontSize: 12, textAlign: 'right' }}>
+                <div style={{ color: 'var(--lime)' }}>{Math.round(it.calories)} kcal</div>
+                <div style={{ color: 'var(--text-on-dark-mute)' }}>
+                  {Math.round(it.proteinG)}P · {Math.round(it.carbsG)}C · {Math.round(it.fatG)}F
+                </div>
+              </div>
+            </div>
+          ))}
+          {result.items.length === 0 && (
+            <p style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', margin: 0 }}>
+              Nothing recognized.
+            </p>
           )}
         </div>
       </Card>
@@ -329,42 +298,35 @@ function Result({
         </Card>
       )}
 
-      {saved ? (
+      {logged ? (
         <Card style={{ background: 'rgba(218,255,63,0.1)', borderColor: 'rgba(218,255,63,0.3)' }}>
-          <Eyebrow color="var(--lime)">ADDED</Eyebrow>
+          <Eyebrow color="var(--lime)">LOGGED</Eyebrow>
           <p style={{ fontSize: 13, marginTop: 6, marginBottom: 4, lineHeight: 1.5 }}>
-            {saved.count} item{saved.count === 1 ? '' : 's'} added to your pantry.
+            Saved to your pact. Meal ID:
           </p>
-          <code style={{ ...mono, fontSize: 11, color: 'var(--text-on-dark-mute)' }}>
-            receiptId: {saved.receiptId}
-          </code>
+          <code style={{ ...mono, fontSize: 11, color: 'var(--text-on-dark-mute)' }}>{logged}</code>
         </Card>
-      ) : onSave ? (
+      ) : onLog ? (
         <button
           type="button"
-          onClick={onSave}
-          disabled={!inGroup || itemCount === 0}
+          onClick={onLog}
+          disabled={!inGroup}
           className="btn btn-lime"
           style={{
             padding: '14px 20px',
             fontSize: 14,
-            opacity: !inGroup || itemCount === 0 ? 0.5 : 1,
-            cursor: !inGroup || itemCount === 0 ? 'not-allowed' : 'pointer',
+            opacity: inGroup ? 1 : 0.5,
+            cursor: inGroup ? 'pointer' : 'not-allowed',
           }}
+          title={inGroup ? '' : 'Make or join a pact first'}
         >
-          {!inGroup
-            ? 'Need a pact to add inventory'
-            : itemCount === 0
-              ? 'Nothing to add'
-              : `Add ${itemCount} item${itemCount === 1 ? '' : 's'} to pantry`}
+          {inGroup ? 'Log this meal' : 'Need a pact to log meals'}
           <Icon name="check" size={14} color="#0a0a0a" strokeWidth={2.5} />
         </button>
       ) : null}
     </div>
   );
 }
-
-/* ── Helpers ─────────────────────────────────────────────────────────── */
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -378,13 +340,6 @@ function fileToBase64(file: File): Promise<string> {
     reader.readAsDataURL(file);
   });
 }
-
-const pageStyle: CSSProperties = {
-  minHeight: '100dvh',
-  background: 'var(--ink)',
-  color: 'var(--text-on-dark)',
-  padding: '40px 24px',
-};
 
 const display: CSSProperties = {
   fontFamily: 'var(--f-display)',

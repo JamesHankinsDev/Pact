@@ -46,7 +46,57 @@
   display: grid;
   grid-template-columns: 1fr;
   gap: 14px;
+  margin-bottom: 14px;
+}
+
+.quickLog {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
   margin-bottom: 18px;
+}
+
+.quickLogCard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--ink-card);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  text-decoration: none;
+  color: var(--text-on-dark);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.quickLogCard:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(218, 255, 63, 0.2);
+}
+
+.quickLogIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(218, 255, 63, 0.1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.quickLogLabel {
+  font-family: var(--f-ui);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.quickLogSub {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  color: var(--text-on-dark-mute);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: 2px;
 }
 
 .bottomGrid {
@@ -89,6 +139,10 @@
   .heroGrid {
     grid-template-columns: 1.7fr 1fr 1fr;
     gap: 16px;
+  }
+  .quickLog {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
   }
   .bottomGrid {
     grid-template-columns: 1fr 1fr 1fr;

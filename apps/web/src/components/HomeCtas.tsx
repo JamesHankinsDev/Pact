@@ -19,9 +19,17 @@ export function HomeCtas() {
             View your dashboard
             <Icon name="arrow" size={14} color="#0a0a0a" strokeWidth={2.5} />
           </Link>
+          <Link href="/log/meal" className="btn btn-ghost-dark" style={{ padding: '14px 20px', fontSize: 14 }}>
+            <Icon name="bowl" size={14} color="var(--text-on-dark)" />
+            Log a meal
+          </Link>
           <Link href="/workout" className="btn btn-ghost-dark" style={{ padding: '14px 20px', fontSize: 14 }}>
             <Icon name="dumbbell" size={14} color="var(--text-on-dark)" />
             Log a workout
+          </Link>
+          <Link href="/log/groceries" className="btn btn-ghost-dark" style={{ padding: '14px 20px', fontSize: 14 }}>
+            <Icon name="cart" size={14} color="var(--text-on-dark)" />
+            Scan groceries
           </Link>
         </>
       ) : (

@@ -84,6 +84,7 @@ function Dashboard({ data }: { data: DashboardData }) {
           todayCalories={todayTotals.calories}
           todayProteinG={todayTotals.proteinG}
         />
+        <QuickLog />
         <WeekGrid
           members={members}
           meals={meals}
@@ -178,6 +179,32 @@ function TopBar({
   );
 }
 
+/* ── Quick log row ───────────────────────────────────────────────────── */
+
+function QuickLog() {
+  const items: Array<{ href: string; icon: 'bowl' | 'dumbbell' | 'cart'; label: string; sub: string }> = [
+    { href: '/log/meal',      icon: 'bowl',     label: 'Log a meal',     sub: 'Snap a photo · macros parsed' },
+    { href: '/workout',       icon: 'dumbbell', label: 'Log a workout',  sub: 'Sets, reps, weight'           },
+    { href: '/log/groceries', icon: 'cart',     label: 'Scan groceries', sub: 'Receipt → pantry'             },
+  ];
+  return (
+    <div className={styles.quickLog}>
+      {items.map((it) => (
+        <Link key={it.href} href={it.href} className={styles.quickLogCard}>
+          <span className={styles.quickLogIcon}>
+            <Icon name={it.icon} size={18} color="var(--lime)" />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className={styles.quickLogLabel}>{it.label}</div>
+            <div className={styles.quickLogSub}>{it.sub}</div>
+          </div>
+          <Icon name="chevron" size={14} color="var(--text-on-dark-faint)" />
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 /* ── Hero strip ──────────────────────────────────────────────────────── */
 
 function HeroStrip({
@@ -249,7 +276,7 @@ function HeroStrip({
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', marginTop: 8 }}>
           {weekMealCount === 0
-            ? 'No meals logged yet — try /dev/meal-vision'
+            ? 'No meals logged yet — tap Log a meal to start'
             : `${members.length} crew · across the last week`}
         </div>
       </Card>
@@ -611,8 +638,7 @@ function BottomRow({
         </div>
         {inventory.length === 0 ? (
           <p style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', margin: 0, lineHeight: 1.5 }}>
-            No items yet. Scan a receipt at <code>/dev/receipt-vision</code> to populate the
-            pantry.
+            No items yet. Tap <Link href="/log/groceries" style={{ color: 'var(--lime)' }}>Scan groceries</Link> to populate the pantry.
           </p>
         ) : (
           inventory.slice(0, 5).map((it, i, arr) => (
