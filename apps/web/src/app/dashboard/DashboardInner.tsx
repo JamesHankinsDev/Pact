@@ -15,6 +15,7 @@ import {
   todayIndexInWeek,
   weekDayNumbers,
   type DashboardData,
+  type InventoryRecord,
   type MealRecord,
 } from '@/lib/group-data';
 import type { GroupMemberDoc } from '@/lib/groups';
@@ -56,7 +57,7 @@ export function DashboardInner() {
 /* ── Main dashboard ──────────────────────────────────────────────────── */
 
 function Dashboard({ data }: { data: DashboardData }) {
-  const { group, members, meals } = data;
+  const { group, members, meals, inventory } = data;
   const week = formatWeekRange(group.currentWeek);
   const dayNums = weekDayNumbers(group.currentWeek);
   const todayIdx = todayIndexInWeek(group.currentWeek);
@@ -88,7 +89,7 @@ function Dashboard({ data }: { data: DashboardData }) {
           todayIdx={todayIdx}
           isoWeek={group.currentWeek}
         />
-        <BottomRow meals={meals} memberById={memberById} />
+        <BottomRow meals={meals} memberById={memberById} inventory={inventory} />
       </div>
     </div>
   );
@@ -525,9 +526,11 @@ function DotSwatch({ color }: { color: string }) {
 function BottomRow({
   meals,
   memberById,
+  inventory,
 }: {
   meals: MealRecord[];
   memberById: Record<string, GroupMemberDoc>;
+  inventory: InventoryRecord[];
 }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
@@ -597,47 +600,62 @@ function BottomRow({
               Inventory
             </div>
           </div>
-          <Chip color="ghost">PLACEHOLDER</Chip>
+          <Chip color="ghost">
+            {inventory.length === 0
+              ? 'EMPTY'
+              : inventory.length >= 20
+                ? '20+ ITEMS'
+                : `${inventory.length} ITEM${inventory.length === 1 ? '' : 'S'}`}
+          </Chip>
         </div>
-        {[
-          { name: 'Eggs', meter: 0.66, sub: '8 of 12 left' },
-          { name: 'Chicken breast', meter: 0.2, sub: 'Running low' },
-          { name: 'Olive oil', meter: 0.7, sub: '70% left' },
-          { name: 'Quinoa', meter: 0.15, sub: 'Add to list' },
-          { name: 'Greek yogurt', meter: 0.4, sub: '3 servings' },
-        ].map((it, i) => {
-          const low = it.meter < 0.25;
-          return (
-            <div key={i} style={{ marginBottom: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                <span style={{ fontWeight: 500 }}>{it.name}</span>
-                <span
-                  className="mono"
-                  style={{ color: low ? '#ff6b4a' : 'var(--text-on-dark-mute)' }}
-                >
-                  {it.sub}
+        {inventory.length === 0 ? (
+          <p style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', margin: 0, lineHeight: 1.5 }}>
+            No items yet. Scan a receipt at <code>/dev/receipt-vision</code> to populate the
+            pantry.
+          </p>
+        ) : (
+          inventory.slice(0, 5).map((it, i, arr) => (
+            <div
+              key={it.id}
+              style={{
+                paddingBottom: 8,
+                marginBottom: 8,
+                borderBottom:
+                  i < arr.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'baseline',
+                  gap: 12,
+                  fontSize: 13,
+                }}
+              >
+                <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {it.name}
+                </span>
+                <span className="mono" style={{ color: 'var(--text-on-dark)', whiteSpace: 'nowrap' }}>
+                  {formatQuantity(it.quantity)} {it.unit}
                 </span>
               </div>
               <div
+                className="mono"
                 style={{
-                  height: 4,
-                  background: 'rgba(255,255,255,0.06)',
-                  borderRadius: 2,
-                  marginTop: 4,
-                  overflow: 'hidden',
+                  fontSize: 10,
+                  color: 'var(--text-on-dark-faint)',
+                  marginTop: 2,
+                  display: 'flex',
+                  gap: 8,
                 }}
               >
-                <div
-                  style={{
-                    height: '100%',
-                    width: `${it.meter * 100}%`,
-                    background: low ? '#ff6b4a' : 'var(--lime)',
-                  }}
-                />
+                {it.estCost != null && <span>${it.estCost.toFixed(2)}</span>}
+                <span>{shortRelativeTime(it.addedAt)} ago</span>
               </div>
             </div>
-          );
-        })}
+          ))
+        )}
       </Card>
 
       <Card>
@@ -711,6 +729,11 @@ function BottomRow({
       </Card>
     </div>
   );
+}
+
+function formatQuantity(q: number): string {
+  if (q === Math.floor(q)) return q.toString();
+  return q.toFixed(2).replace(/\.?0+$/, '');
 }
 
 function mealSummary(meal: MealRecord): string {

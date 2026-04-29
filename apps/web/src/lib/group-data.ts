@@ -41,6 +41,18 @@ export type WeekPactRecord = {
   memberUids: string[];
 };
 
+/** UI-shaped inventory record — addedAt flattened to ms. */
+export type InventoryRecord = {
+  id: string;
+  name: string;
+  quantity: number;
+  unit: string;
+  estCost: number | null;
+  source: string;
+  addedBy: string | null;
+  addedAt: number;
+};
+
 export type DashboardData = {
   group: DashboardGroup;
   members: GroupMemberDoc[];
@@ -48,6 +60,8 @@ export type DashboardData = {
   meals: MealRecord[];
   /** This week's signed pact, if any. */
   pact: WeekPactRecord | null;
+  /** Latest inventory items, newest first (capped at 20). */
+  inventory: InventoryRecord[];
 };
 
 const MEALS_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -65,7 +79,7 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
   const sinceMs = Date.now() - MEALS_LOOKBACK_MS;
   const sinceTs = Timestamp.fromMillis(sinceMs);
 
-  const [membersSnap, mealsSnap, pactSnap] = await Promise.all([
+  const [membersSnap, mealsSnap, pactSnap, inventorySnap] = await Promise.all([
     getDocs(query(collection(db, 'groups', groupId, 'members'), orderBy('joinedAt', 'asc'))),
     getDocs(
       query(
@@ -76,6 +90,13 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
       ),
     ),
     getDoc(doc(db, 'groups', groupId, 'pacts', group.currentWeek)),
+    getDocs(
+      query(
+        collection(db, 'groups', groupId, 'inventory'),
+        orderBy('addedAt', 'desc'),
+        limit(20),
+      ),
+    ),
   ]);
 
   const members: GroupMemberDoc[] = membersSnap.docs.map((d) => d.data() as GroupMemberDoc);
@@ -100,6 +121,28 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
     };
   });
 
+  const inventory: InventoryRecord[] = inventorySnap.docs.map((d) => {
+    const raw = d.data() as {
+      name?: string;
+      quantity?: number;
+      unit?: string;
+      estCost?: number | null;
+      source?: string;
+      addedBy?: string;
+      addedAt?: Timestamp;
+    };
+    return {
+      id: d.id,
+      name: raw.name ?? 'Unknown',
+      quantity: raw.quantity ?? 0,
+      unit: raw.unit ?? 'ea',
+      estCost: raw.estCost ?? null,
+      source: raw.source ?? 'manual',
+      addedBy: raw.addedBy ?? null,
+      addedAt: raw.addedAt?.toMillis() ?? 0,
+    };
+  });
+
   const pact: WeekPactRecord | null = pactSnap.exists()
     ? (() => {
         const r = pactSnap.data() as {
@@ -117,7 +160,7 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
       })()
     : null;
 
-  return { group, members, meals, pact };
+  return { group, members, meals, pact, inventory };
 }
 
 /** Sum macros across a list of meals. */
