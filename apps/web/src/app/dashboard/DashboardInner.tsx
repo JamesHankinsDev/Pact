@@ -189,11 +189,12 @@ function TopBar({
 /* ── Quick log row ───────────────────────────────────────────────────── */
 
 function QuickLog() {
-  const items: Array<{ href: string; icon: 'bowl' | 'dumbbell' | 'cart' | 'weight'; label: string; sub: string }> = [
+  const items: Array<{ href: string; icon: 'bowl' | 'dumbbell' | 'cart' | 'weight' | 'pill'; label: string; sub: string }> = [
     { href: '/log/meal',      icon: 'bowl',     label: 'Log a meal',     sub: 'Snap a photo · macros parsed' },
     { href: '/workout',       icon: 'dumbbell', label: 'Log a workout',  sub: 'Sets, reps, weight'           },
     { href: '/log/groceries', icon: 'cart',     label: 'Scan groceries', sub: 'Receipt → pantry'             },
     { href: '/log/body',      icon: 'weight',   label: 'Log weight',     sub: 'Trend, optional photo'        },
+    { href: '/meds',          icon: 'pill',     label: 'Pills',          sub: 'Private · daily check-in'     },
   ];
   return (
     <div className={styles.quickLog}>
