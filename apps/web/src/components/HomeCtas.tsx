@@ -31,6 +31,10 @@ export function HomeCtas() {
             <Icon name="cart" size={14} color="var(--text-on-dark)" />
             Scan groceries
           </Link>
+          <Link href="/log/body" className="btn btn-ghost-dark" style={{ padding: '14px 20px', fontSize: 14 }}>
+            <Icon name="weight" size={14} color="var(--text-on-dark)" />
+            Log weight
+          </Link>
         </>
       ) : (
         <>

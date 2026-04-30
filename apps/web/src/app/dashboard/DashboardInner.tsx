@@ -17,8 +17,10 @@ import {
   type DashboardData,
   type InventoryRecord,
   type MealRecord,
+  type WeightRecord,
   type WorkoutRecord,
 } from '@/lib/group-data';
+import { weeklyAveragesByMember } from '@/lib/weight';
 import styles from './dashboard.module.css';
 import type { GroupMemberDoc } from '@/lib/groups';
 
@@ -59,7 +61,7 @@ export function DashboardInner() {
 /* ── Main dashboard ──────────────────────────────────────────────────── */
 
 function Dashboard({ data }: { data: DashboardData }) {
-  const { group, members, meals, inventory, workouts } = data;
+  const { group, members, meals, inventory, workouts, weightLogs } = data;
   const week = formatWeekRange(group.currentWeek);
   const dayNums = weekDayNumbers(group.currentWeek);
   const todayIdx = todayIndexInWeek(group.currentWeek);
@@ -93,7 +95,12 @@ function Dashboard({ data }: { data: DashboardData }) {
           todayIdx={todayIdx}
           isoWeek={group.currentWeek}
         />
-        <BottomRow meals={meals} memberById={memberById} inventory={inventory} />
+        <BottomRow
+          meals={meals}
+          memberById={memberById}
+          inventory={inventory}
+          weightLogs={weightLogs}
+        />
       </div>
     </div>
   );
@@ -182,10 +189,11 @@ function TopBar({
 /* ── Quick log row ───────────────────────────────────────────────────── */
 
 function QuickLog() {
-  const items: Array<{ href: string; icon: 'bowl' | 'dumbbell' | 'cart'; label: string; sub: string }> = [
+  const items: Array<{ href: string; icon: 'bowl' | 'dumbbell' | 'cart' | 'weight'; label: string; sub: string }> = [
     { href: '/log/meal',      icon: 'bowl',     label: 'Log a meal',     sub: 'Snap a photo · macros parsed' },
     { href: '/workout',       icon: 'dumbbell', label: 'Log a workout',  sub: 'Sets, reps, weight'           },
     { href: '/log/groceries', icon: 'cart',     label: 'Scan groceries', sub: 'Receipt → pantry'             },
+    { href: '/log/body',      icon: 'weight',   label: 'Log weight',     sub: 'Trend, optional photo'        },
   ];
   return (
     <div className={styles.quickLog}>
@@ -551,67 +559,131 @@ function DotSwatch({ color }: { color: string }) {
 
 /* ── Bottom row ──────────────────────────────────────────────────────── */
 
-function BottomRow({
-  meals,
+/* ── Weight trend card ───────────────────────────────────────────────── */
+
+function WeightTrendCard({
+  weightLogs,
   memberById,
-  inventory,
 }: {
-  meals: MealRecord[];
+  weightLogs: WeightRecord[];
   memberById: Record<string, GroupMemberDoc>;
-  inventory: InventoryRecord[];
 }) {
-  return (
-    <div className={styles.bottomGrid}>
+  const series = useMemo(() => weeklyAveragesByMember(weightLogs, 8), [weightLogs]);
+
+  if (series.length === 0) {
+    return (
       <Card>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'flex-start',
-            marginBottom: 14,
-          }}
-        >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
           <div>
             <Eyebrow>WEIGHT · LAST 8 WEEKS</Eyebrow>
             <div className="display" style={{ fontSize: 18, fontWeight: 700, marginTop: 2 }}>
               Trends
             </div>
           </div>
-          <Chip color="lime">−4.2 LB</Chip>
+          <Chip color="ghost">EMPTY</Chip>
         </div>
-        <svg viewBox="0 0 320 120" style={{ width: '100%', height: 120 }}>
-          <defs>
-            <linearGradient id="wfade" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#daff3f" stopOpacity="0.3" />
-              <stop offset="100%" stopColor="#daff3f" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          <path
-            d="M0,40 L40,42 L80,38 L120,46 L160,52 L200,58 L240,68 L280,72 L320,78 L320,120 L0,120 Z"
-            fill="url(#wfade)"
-          />
-          <path
-            d="M0,40 L40,42 L80,38 L120,46 L160,52 L200,58 L240,68 L280,72 L320,78"
-            stroke="#daff3f"
-            strokeWidth="2"
-            fill="none"
-          />
-          <path
-            d="M0,60 L40,58 L80,62 L120,55 L160,58 L200,52 L240,55 L280,50 L320,48"
-            stroke="#ff6b4a"
-            strokeWidth="2"
-            fill="none"
-            strokeDasharray="3 3"
-          />
-          {[
-            [0, 40], [40, 42], [80, 38], [120, 46], [160, 52],
-            [200, 58], [240, 68], [280, 72], [320, 78],
-          ].map(([x, y], i) => (
-            <circle key={i} cx={x} cy={y} r="3" fill="#daff3f" />
-          ))}
-        </svg>
-        <div style={{ ...mockTagStyle, marginTop: 8 }}>placeholder · weight module coming</div>
+        <p style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', margin: 0, lineHeight: 1.5 }}>
+          No weight logs yet. Tap{' '}
+          <Link href="/log/body" style={{ color: 'var(--lime)' }}>
+            Log weight
+          </Link>{' '}
+          to start the trend. Crew sees the number; photos stay private.
+        </p>
       </Card>
+    );
+  }
+
+  // Compute chart bounds across all series
+  const allWeights = series.flatMap((s) => s.points.map((p) => p.avgLb));
+  const minLb = Math.min(...allWeights);
+  const maxLb = Math.max(...allWeights);
+  const allWeeks = Array.from(new Set(series.flatMap((s) => s.points.map((p) => p.weekStart)))).sort(
+    (a, b) => a - b,
+  );
+
+  const W = 320;
+  const H = 120;
+  const PAD_TOP = 12;
+  const PAD_BOTTOM = 12;
+  const range = Math.max(1, maxLb - minLb);
+
+  function xFor(weekStart: number): number {
+    if (allWeeks.length === 1) return W / 2;
+    const minWeek = allWeeks[0]!;
+    const maxWeek = allWeeks[allWeeks.length - 1]!;
+    return ((weekStart - minWeek) / (maxWeek - minWeek)) * W;
+  }
+  function yFor(lb: number): number {
+    return H - PAD_BOTTOM - ((lb - minLb) / range) * (H - PAD_TOP - PAD_BOTTOM);
+  }
+
+  // Compute first→last delta for the largest-data series for the chip
+  const longest = series.reduce((a, b) => (a.points.length >= b.points.length ? a : b));
+  const delta = longest.points[longest.points.length - 1]!.avgLb - longest.points[0]!.avgLb;
+  const deltaSign = delta < 0 ? '−' : '+';
+  const deltaAbs = Math.abs(delta).toFixed(1);
+
+  return (
+    <Card>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+        <div>
+          <Eyebrow>WEIGHT · LAST 8 WEEKS</Eyebrow>
+          <div className="display" style={{ fontSize: 18, fontWeight: 700, marginTop: 2 }}>
+            Trends
+          </div>
+        </div>
+        <Chip color={delta < 0 ? 'lime' : 'ghost'}>
+          {deltaSign}
+          {deltaAbs} LB
+        </Chip>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: H }} preserveAspectRatio="none">
+        {series.map((s) => {
+          const member = memberById[s.memberId];
+          const stroke = member?.color ?? '#daff3f';
+          const path = s.points
+            .map((p, i) => `${i === 0 ? 'M' : 'L'}${xFor(p.weekStart).toFixed(1)},${yFor(p.avgLb).toFixed(1)}`)
+            .join(' ');
+          return (
+            <g key={s.memberId}>
+              <path d={path} stroke={stroke} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              {s.points.map((p, i) => (
+                <circle key={i} cx={xFor(p.weekStart)} cy={yFor(p.avgLb)} r={3} fill={stroke} />
+              ))}
+            </g>
+          );
+        })}
+      </svg>
+      <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+        {series.map((s) => {
+          const member = memberById[s.memberId];
+          if (!member) return null;
+          return (
+            <div key={s.memberId} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+              <span style={{ width: 8, height: 2, background: member.color }} />
+              {member.name}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function BottomRow({
+  meals,
+  memberById,
+  inventory,
+  weightLogs,
+}: {
+  meals: MealRecord[];
+  memberById: Record<string, GroupMemberDoc>;
+  inventory: InventoryRecord[];
+  weightLogs: WeightRecord[];
+}) {
+  return (
+    <div className={styles.bottomGrid}>
+      <WeightTrendCard weightLogs={weightLogs} memberById={memberById} />
 
       <Card>
         <div
@@ -775,14 +847,6 @@ function mealSummary(meal: MealRecord): string {
       : 'Logged meal';
   return `${lead} · ${cal} cal · ${protein}g protein`;
 }
-
-const mockTagStyle = {
-  fontSize: 10,
-  fontFamily: 'var(--f-mono)',
-  color: 'var(--text-on-dark-faint)',
-  textTransform: 'uppercase' as const,
-  letterSpacing: '0.14em',
-};
 
 /* ── Empty / loading states ──────────────────────────────────────────── */
 

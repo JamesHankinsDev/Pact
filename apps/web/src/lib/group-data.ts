@@ -14,9 +14,10 @@ import {
 import { getFirebase } from './firebase';
 import type { GroupMemberDoc } from './groups';
 import { workoutFromSnap, type WorkoutRecord } from './workouts';
+import { weightFromSnap, type WeightRecord } from './weight';
 import type { Macros, MealParseItem, PactCommitment } from '@pact/types';
 
-export type { WorkoutRecord };
+export type { WorkoutRecord, WeightRecord };
 
 export type DashboardGroup = {
   id: string;
@@ -63,11 +64,15 @@ export type DashboardData = {
   meals: MealRecord[];
   /** Last 7 days of workouts across the whole group, newest first. */
   workouts: WorkoutRecord[];
+  /** Last ~8 weeks of weight logs across the whole group, newest first. */
+  weightLogs: WeightRecord[];
   /** This week's signed pact, if any. */
   pact: WeekPactRecord | null;
   /** Latest inventory items, newest first (capped at 20). */
   inventory: InventoryRecord[];
 };
+
+const WEIGHT_LOOKBACK_MS = 9 * 7 * 24 * 60 * 60 * 1000; // 9 weeks of buffer for "last 8 weeks" charts
 
 const MEALS_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 const MEALS_HARD_LIMIT = 200;
@@ -84,7 +89,9 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
   const sinceMs = Date.now() - MEALS_LOOKBACK_MS;
   const sinceTs = Timestamp.fromMillis(sinceMs);
 
-  const [membersSnap, mealsSnap, pactSnap, inventorySnap, workoutsSnap] = await Promise.all([
+  const weightSinceTs = Timestamp.fromMillis(Date.now() - WEIGHT_LOOKBACK_MS);
+
+  const [membersSnap, mealsSnap, pactSnap, inventorySnap, workoutsSnap, weightSnap] = await Promise.all([
     getDocs(query(collection(db, 'groups', groupId, 'members'), orderBy('joinedAt', 'asc'))),
     getDocs(
       query(
@@ -106,6 +113,14 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
       query(
         collection(db, 'groups', groupId, 'workouts'),
         where('loggedAt', '>=', sinceTs),
+        orderBy('loggedAt', 'desc'),
+        limit(MEALS_HARD_LIMIT),
+      ),
+    ),
+    getDocs(
+      query(
+        collection(db, 'groups', groupId, 'weightLogs'),
+        where('loggedAt', '>=', weightSinceTs),
         orderBy('loggedAt', 'desc'),
         limit(MEALS_HARD_LIMIT),
       ),
@@ -174,8 +189,9 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
     : null;
 
   const workouts: WorkoutRecord[] = workoutsSnap.docs.map((d) => workoutFromSnap(d));
+  const weightLogs: WeightRecord[] = weightSnap.docs.map((d) => weightFromSnap(d));
 
-  return { group, members, meals, workouts, pact, inventory };
+  return { group, members, meals, workouts, weightLogs, pact, inventory };
 }
 
 /** Sum macros across a list of meals. */

@@ -208,11 +208,16 @@ export interface PracticeTick {
 }
 
 export interface WeightLog {
+  id: string;
   memberId: string;
   groupId: string;
-  date: ISODate;
+  date: ISODate;            // YYYY-MM-DD local
+  loggedAt: Timestamp;
   weightLb: number;
+  bodyFatPct?: number;
+  notes?: string;
   photoUrl?: string;
+  storagePath?: string;     // gs:// path to the progress photo, owner-only readable
 }
 
 export type FeedItemKind = 'pr' | 'streak' | 'meal' | 'note';

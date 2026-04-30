@@ -71,6 +71,17 @@ service cloud.firestore {
         allow update, delete: if isMember(groupId)
           && resource.data.memberId == request.auth.uid;
       }
+      match /weightLogs/{logId} {
+        // Crew can see weight numbers (for the dashboard trend chart and
+        // celebrations like "Sara is down 2 lbs"); only the author can
+        // create / modify their own log. Progress photos sit in Storage
+        // under owner-only read rules — see storage.rules.
+        allow read: if isMember(groupId);
+        allow create: if isMember(groupId)
+          && request.resource.data.memberId == request.auth.uid;
+        allow update, delete: if isMember(groupId)
+          && resource.data.memberId == request.auth.uid;
+      }
       match /meals/{mealId} {
         allow read: if isMember(groupId);
         allow create: if isMember(groupId)
