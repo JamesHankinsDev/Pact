@@ -9,6 +9,7 @@ import { getFirebase } from '@/lib/firebase';
 import { saveWorkoutSession } from '@/lib/workouts';
 import { loadBodyProfile } from '@/lib/nutrition-goals';
 import { useSpeechRecognition } from '@/lib/speech-recognition';
+import { compressImageForUpload } from '@/lib/image-compress';
 import type { ExerciseTag, WorkoutParseExercise, WorkoutParseResult } from '@pact/types';
 
 type Mode = 'photo' | 'describe' | 'manual';
@@ -96,13 +97,19 @@ function PhotoMode() {
       setState({ status: 'error', message: `Unsupported file type: ${file.type}` });
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setState({ status: 'error', message: `Image too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Limit is 10 MB.` });
+    if (file.size > 30 * 1024 * 1024) {
+      setState({ status: 'error', message: `Image too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Limit is 30 MB.` });
       return;
     }
     setState({ status: 'reading' });
     const preview = URL.createObjectURL(file);
-    const base64 = await fileToBase64(file);
+    let compressed;
+    try {
+      compressed = await compressImageForUpload(file);
+    } catch (err) {
+      setState({ status: 'error', message: err instanceof Error ? err.message : 'Could not read image' });
+      return;
+    }
 
     setState({ status: 'parsing' });
     try {
@@ -115,8 +122,8 @@ function PhotoMode() {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${idToken}` },
         body: JSON.stringify({
-          imageBase64: base64,
-          imageMediaType: file.type,
+          imageBase64: compressed.base64,
+          imageMediaType: compressed.mediaType,
           bodyWeightLb: body?.weightLb,
         }),
       });
@@ -1382,17 +1389,3 @@ const mono10: CSSProperties = {
   letterSpacing: '0.1em',
 };
 
-/* ── Helpers ─────────────────────────────────────────────────────────── */
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const comma = result.indexOf(',');
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'));
-    reader.readAsDataURL(file);
-  });
-}

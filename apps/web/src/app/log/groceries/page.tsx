@@ -6,6 +6,7 @@ import { Brand, Card, Eyebrow, Icon, StatNumeral } from '@/components/primitives
 import { useAuth } from '@/lib/auth-context';
 import { getFirebase } from '@/lib/firebase';
 import { saveReceipt } from '@/lib/inventory';
+import { compressImageForUpload } from '@/lib/image-compress';
 import { useSpeechRecognition } from '@/lib/speech-recognition';
 import type { ReceiptParseResult, ReceiptParseItem } from '@pact/types';
 
@@ -49,17 +50,23 @@ export default function GroceriesPage() {
       setState({ status: 'error', message: `Unsupported file type: ${file.type}` });
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
+    if (file.size > 30 * 1024 * 1024) {
       setState({
         status: 'error',
-        message: `Image too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Limit is 10 MB.`,
+        message: `Image too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Limit is 30 MB.`,
       });
       return;
     }
 
     setState({ status: 'reading' });
     const preview = URL.createObjectURL(file);
-    const base64 = await fileToBase64(file);
+    let compressed;
+    try {
+      compressed = await compressImageForUpload(file);
+    } catch (err) {
+      setState({ status: 'error', message: err instanceof Error ? err.message : 'Could not read image' });
+      return;
+    }
 
     setState({ status: 'analyzing' });
     try {
@@ -70,7 +77,7 @@ export default function GroceriesPage() {
       const res = await fetch('/api/vision/receipt', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${idToken}` },
-        body: JSON.stringify({ imageBase64: base64, imageMediaType: file.type }),
+        body: JSON.stringify({ imageBase64: compressed.base64, imageMediaType: compressed.mediaType }),
       });
       if (!res.ok) {
         const errBody = (await res.json().catch(() => ({}))) as { error?: string };
@@ -754,20 +761,7 @@ function Pulse({ label }: { label: string }) {
   );
 }
 
-/* ── Helpers + styles ────────────────────────────────────────────────── */
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const comma = result.indexOf(',');
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'));
-    reader.readAsDataURL(file);
-  });
-}
+/* ── Styles ──────────────────────────────────────────────────────────── */
 
 const pageStyle: CSSProperties = {
   minHeight: '100dvh',

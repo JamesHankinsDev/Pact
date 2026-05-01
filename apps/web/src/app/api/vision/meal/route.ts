@@ -6,7 +6,10 @@ import { parseMealPhoto } from '@/lib/meal-vision';
 export const runtime = 'nodejs';
 
 const ALLOWED_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB — well under Anthropic's 30 MB ceiling
+// Vercel serverless functions cap request bodies at ~4.5 MB. Base64 inflates
+// payloads by ~33%, so we keep the decoded ceiling at 3 MB to leave headroom
+// for the JSON envelope. Clients should compress before upload.
+const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 
 type RequestBody = {
   imageBase64?: string;

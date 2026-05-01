@@ -7,7 +7,9 @@ export const runtime = 'nodejs';
 
 const ALLOWED_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
 type WorkoutMediaType = (typeof ALLOWED_MEDIA_TYPES)[number];
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+// Vercel serverless body limit ~4.5 MB; base64 inflates ~33%, so we cap
+// decoded payloads at 3 MB. Clients compress before upload.
+const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 
 type RequestBody = {
   imageBase64?: string;
