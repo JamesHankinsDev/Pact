@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Avatar, AvatarStack, Card, Chip, Eyebrow, Icon } from '@/components/primitives';
@@ -15,12 +15,25 @@ import {
   todayIndexInWeek,
   weekDayNumbers,
   type DashboardData,
-  type InventoryRecord,
   type MealRecord,
   type WeightRecord,
   type WorkoutRecord,
 } from '@/lib/group-data';
+import { loadHouseholdInventory, type InventoryRecord } from '@/lib/inventory';
 import { weeklyAveragesByMember } from '@/lib/weight';
+import {
+  loadRecentUserWorkoutsDetailed,
+  workoutVolume,
+  type WorkoutDetail,
+} from '@/lib/workouts';
+import {
+  computeCrewFeed,
+  computeMemberAchievements,
+  TIER_COLOR,
+  topTierByCategory,
+  type CrewFeedItem,
+  type EarnedAchievement,
+} from '@/lib/achievements';
 import styles from './dashboard.module.css';
 import type { GroupMemberDoc } from '@/lib/groups';
 
@@ -30,6 +43,8 @@ export function DashboardInner() {
   const router = useRouter();
   const { user, profile, loading: authLoading, configured } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
+  const [userWorkouts, setUserWorkouts] = useState<WorkoutDetail[]>([]);
+  const [inventory, setInventory] = useState<InventoryRecord[]>([]);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,12 +55,29 @@ export function DashboardInner() {
     }
     if (!profile?.currentGroupId) return;
     let cancelled = false;
-    loadDashboardData(profile.currentGroupId)
+    const groupId = profile.currentGroupId;
+    const householdId = profile.currentHouseholdId;
+    const sinceMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    loadDashboardData(groupId)
       .then((d) => { if (!cancelled) setData(d); })
       .catch((err) => {
         if (cancelled) return;
         setLoadErr(err instanceof Error ? err.message : 'Could not load your pact');
       });
+    // Detailed workouts (with per-set weight × reps) for the user's hero card.
+    // Failure here is non-fatal — the card just falls back to zero volume.
+    loadRecentUserWorkoutsDetailed(groupId, user.uid, sinceMs)
+      .then((w) => { if (!cancelled) setUserWorkouts(w); })
+      .catch(() => {});
+    // Inventory is household-scoped now. Skip the load if the user hasn't
+    // set up a household yet — the card will show a setup prompt instead.
+    if (householdId) {
+      loadHouseholdInventory(householdId)
+        .then((items) => { if (!cancelled) setInventory(items); })
+        .catch(() => {});
+    } else {
+      setInventory([]);
+    }
     return () => { cancelled = true; };
   }, [authLoading, user, profile, router]);
 
@@ -55,13 +87,31 @@ export function DashboardInner() {
   if (loadErr) return <FullPageNote title="Couldn't load your pact" body={loadErr} />;
   if (!data) return <FullPageNote title="Loading your pact…" />;
 
-  return <Dashboard data={data} />;
+  return (
+    <Dashboard
+      data={data}
+      userWorkouts={userWorkouts}
+      inventory={inventory}
+      hasHousehold={!!profile?.currentHouseholdId}
+    />
+  );
 }
 
 /* ── Main dashboard ──────────────────────────────────────────────────── */
 
-function Dashboard({ data }: { data: DashboardData }) {
-  const { group, members, meals, inventory, workouts, weightLogs } = data;
+function Dashboard({
+  data,
+  userWorkouts,
+  inventory,
+  hasHousehold,
+}: {
+  data: DashboardData;
+  userWorkouts: WorkoutDetail[];
+  inventory: InventoryRecord[];
+  hasHousehold: boolean;
+}) {
+  const { user } = useAuth();
+  const { group, members, meals, workouts, weightLogs } = data;
   const week = formatWeekRange(group.currentWeek);
   const dayNums = weekDayNumbers(group.currentWeek);
   const todayIdx = todayIndexInWeek(group.currentWeek);
@@ -69,24 +119,61 @@ function Dashboard({ data }: { data: DashboardData }) {
 
   const todayMeals = useMemo(() => mealsLoggedToday(meals), [meals]);
   const todayTotals = useMemo(() => sumMacros(todayMeals), [todayMeals]);
+
+  const todayUserWorkouts = useMemo(() => {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const startMs = start.getTime();
+    return userWorkouts.filter((w) => w.loggedAt >= startMs);
+  }, [userWorkouts]);
+
+  const todayTraining = useMemo(() => {
+    const sets = todayUserWorkouts.reduce((a, w) => a + w.totalSets, 0);
+    const volume = todayUserWorkouts.reduce((a, w) => a + workoutVolume(w), 0);
+    return { count: todayUserWorkouts.length, sets, volume };
+  }, [todayUserWorkouts]);
+
   const memberById = useMemo(
     () => Object.fromEntries(members.map((m) => [m.uid, m])),
     [members],
   );
 
+  const ownAchievements = useMemo<EarnedAchievement[]>(() => {
+    if (!user) return [];
+    const ownMeals = meals.filter((m) => m.memberId === user.uid);
+    const ownWorkouts = workouts.filter((w) => w.memberId === user.uid);
+    const ownWeights = weightLogs.filter((wl) => wl.memberId === user.uid);
+    return topTierByCategory(
+      computeMemberAchievements({
+        meals: ownMeals,
+        workouts: ownWorkouts,
+        weightLogs: ownWeights,
+        detailedWorkouts: userWorkouts,
+      }),
+    );
+  }, [user, meals, workouts, weightLogs, userWorkouts]);
+
   return (
     <div className={styles.shell}>
-      <TopBar week={week} stackMembers={stackMembers} />
+      <TopBar
+        week={week}
+        stackMembers={stackMembers}
+        groupName={group.name}
+        inviteCode={group.inviteCode}
+      />
       <div className={styles.body}>
         <HeroStrip
           group={group}
           members={members}
-          weekMealCount={meals.length}
           todayMealCount={todayMeals.length}
           todayCalories={todayTotals.calories}
           todayProteinG={todayTotals.proteinG}
+          todayWorkoutCount={todayTraining.count}
+          todaySets={todayTraining.sets}
+          todayVolume={todayTraining.volume}
         />
         <QuickLog />
+        <YourAchievementsRow achievements={ownAchievements} />
         <WeekGrid
           members={members}
           meals={meals}
@@ -97,9 +184,12 @@ function Dashboard({ data }: { data: DashboardData }) {
         />
         <BottomRow
           meals={meals}
+          workouts={workouts}
           memberById={memberById}
           inventory={inventory}
+          hasHousehold={hasHousehold}
           weightLogs={weightLogs}
+          selfUid={user?.uid ?? null}
         />
       </div>
     </div>
@@ -111,9 +201,13 @@ function Dashboard({ data }: { data: DashboardData }) {
 function TopBar({
   week,
   stackMembers,
+  groupName,
+  inviteCode,
 }: {
   week: { label: string; range: string };
   stackMembers: Array<{ initials: string; color: string }>;
+  groupName: string;
+  inviteCode: string;
 }) {
   return (
     <div className={styles.topBar}>
@@ -180,6 +274,7 @@ function TopBar({
           {week.label} · {week.range}
         </span>
         {stackMembers.length > 0 && <AvatarStack members={stackMembers} size={28} dark />}
+        <InviteButton groupName={groupName} inviteCode={inviteCode} />
         <HomeAuthBar />
       </div>
     </div>
@@ -189,12 +284,12 @@ function TopBar({
 /* ── Quick log row ───────────────────────────────────────────────────── */
 
 function QuickLog() {
-  const items: Array<{ href: string; icon: 'bowl' | 'dumbbell' | 'cart' | 'weight' | 'pill'; label: string; sub: string }> = [
+  const items: Array<{ href: string; icon: 'bowl' | 'dumbbell' | 'cart' | 'weight' | 'home'; label: string; sub: string }> = [
     { href: '/log/meal',      icon: 'bowl',     label: 'Log a meal',     sub: 'Snap a photo · macros parsed' },
     { href: '/workout',       icon: 'dumbbell', label: 'Log a workout',  sub: 'Sets, reps, weight'           },
     { href: '/log/groceries', icon: 'cart',     label: 'Scan groceries', sub: 'Receipt → pantry'             },
     { href: '/log/body',      icon: 'weight',   label: 'Log weight',     sub: 'Trend, optional photo'        },
-    { href: '/meds',          icon: 'pill',     label: 'Pills',          sub: 'Private · daily check-in'     },
+    { href: '/household',     icon: 'home',     label: 'Household',      sub: 'Share fridge & pantry'        },
   ];
   return (
     <div className={styles.quickLog}>
@@ -219,17 +314,21 @@ function QuickLog() {
 function HeroStrip({
   group,
   members,
-  weekMealCount,
   todayMealCount,
   todayCalories,
   todayProteinG,
+  todayWorkoutCount,
+  todaySets,
+  todayVolume,
 }: {
   group: { name: string; memberUids: string[] };
   members: GroupMemberDoc[];
-  weekMealCount: number;
   todayMealCount: number;
   todayCalories: number;
   todayProteinG: number;
+  todayWorkoutCount: number;
+  todaySets: number;
+  todayVolume: number;
 }) {
   const stack = members.slice(0, 4).map((m) => ({ initials: m.initials, color: m.color }));
   return (
@@ -278,29 +377,39 @@ function HeroStrip({
         )}
       </div>
 
-      <Card style={{ padding: '20px 22px' }}>
-        <Eyebrow>MEALS · 7 DAYS</Eyebrow>
-        <div className="numeral" style={{ fontSize: 60, marginTop: 4 }}>
-          {weekMealCount}
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', marginTop: 8 }}>
-          {weekMealCount === 0
-            ? 'No meals logged yet — tap Log a meal to start'
-            : `${members.length} crew · across the last week`}
-        </div>
-      </Card>
+      <Link href="/meals" style={{ textDecoration: 'none', color: 'inherit' }}>
+        <Card style={{ padding: '20px 22px', cursor: 'pointer' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <Eyebrow>TODAY · CALORIES</Eyebrow>
+            <Icon name="chevron" size={14} color="var(--text-on-dark-faint)" />
+          </div>
+          <div className="numeral" style={{ fontSize: 60, marginTop: 4 }}>
+            {Math.round(todayCalories).toLocaleString()}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', marginTop: 8 }}>
+            {todayMealCount === 0
+              ? 'No meals yet — tap to log one'
+              : `${todayMealCount} meal${todayMealCount === 1 ? '' : 's'} · ${Math.round(todayProteinG)}g protein`}
+          </div>
+        </Card>
+      </Link>
 
-      <Card style={{ padding: '20px 22px' }}>
-        <Eyebrow>TODAY · CALORIES</Eyebrow>
-        <div className="numeral" style={{ fontSize: 60, marginTop: 4 }}>
-          {Math.round(todayCalories).toLocaleString()}
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', marginTop: 8 }}>
-          {todayMealCount === 0
-            ? 'Nothing logged today yet'
-            : `${todayMealCount} meal${todayMealCount === 1 ? '' : 's'} · ${Math.round(todayProteinG)}g protein`}
-        </div>
-      </Card>
+      <Link href="/workouts" style={{ textDecoration: 'none', color: 'inherit' }}>
+        <Card style={{ padding: '20px 22px', cursor: 'pointer' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <Eyebrow>TODAY · LBS LIFTED</Eyebrow>
+            <Icon name="chevron" size={14} color="var(--text-on-dark-faint)" />
+          </div>
+          <div className="numeral" style={{ fontSize: 60, marginTop: 4 }}>
+            {Math.round(todayVolume).toLocaleString()}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', marginTop: 8 }}>
+            {todayWorkoutCount === 0
+              ? 'No training yet — tap to log one'
+              : `${todayWorkoutCount} workout${todayWorkoutCount === 1 ? '' : 's'} · ${todaySets} set${todaySets === 1 ? '' : 's'}`}
+          </div>
+        </Card>
+      </Link>
     </div>
   );
 }
@@ -420,6 +529,8 @@ function WeekGrid({
           justifyContent: 'space-between',
           alignItems: 'flex-end',
           marginBottom: 12,
+          gap: 12,
+          flexWrap: 'wrap',
         }}
       >
         <div>
@@ -428,11 +539,28 @@ function WeekGrid({
             Together this week
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <Chip color="ghost"><DotSwatch color="#daff3f" />WORKOUT</Chip>
-          <Chip color="ghost"><DotSwatch color="#7cd4ff" />MEAL</Chip>
-          <Chip color="ghost"><DotSwatch color="#ff6b4a" />PR</Chip>
-          <Chip color="ghost"><DotSwatch color="#c58cff" />PRACTICE</Chip>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Link
+            href="/workouts"
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: 'var(--text-on-dark-mute)',
+              textDecoration: 'none',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              letterSpacing: '0.1em',
+            }}
+          >
+            TRAINING <Icon name="chevron" size={11} color="var(--text-on-dark-mute)" />
+          </Link>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <Chip color="ghost"><DotSwatch color="#daff3f" />WORKOUT</Chip>
+            <Chip color="ghost"><DotSwatch color="#7cd4ff" />MEAL</Chip>
+            <Chip color="ghost"><DotSwatch color="#ff6b4a" />PR</Chip>
+            <Chip color="ghost"><DotSwatch color="#c58cff" />PRACTICE</Chip>
+          </div>
         </div>
       </div>
 
@@ -565,13 +693,16 @@ function DotSwatch({ color }: { color: string }) {
 function WeightTrendCard({
   weightLogs,
   memberById,
+  selfUid,
 }: {
   weightLogs: WeightRecord[];
   memberById: Record<string, GroupMemberDoc>;
+  selfUid: string | null;
 }) {
   const series = useMemo(() => weeklyAveragesByMember(weightLogs, 8), [weightLogs]);
+  const latest = useMemo(() => latestByMember(weightLogs), [weightLogs]);
 
-  if (series.length === 0) {
+  if (latest.length === 0) {
     return (
       <Card>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
@@ -594,7 +725,190 @@ function WeightTrendCard({
     );
   }
 
-  // Compute chart bounds across all series
+  // Header chip — only show your own delta, since crew weight is private.
+  let headerChip: { label: string; tone: 'lime' | 'ghost' };
+  const ownSeries = selfUid ? series.find((s) => s.memberId === selfUid) : undefined;
+  if (ownSeries && ownSeries.points.length >= 2) {
+    const delta = ownSeries.points[ownSeries.points.length - 1]!.avgLb - ownSeries.points[0]!.avgLb;
+    const sign = delta < 0 ? '−' : '+';
+    headerChip = {
+      label: `${sign}${Math.abs(delta).toFixed(1)} LB`,
+      tone: delta < 0 ? 'lime' : 'ghost',
+    };
+  } else {
+    headerChip = { label: `${latest.length} LOGGED`, tone: 'ghost' };
+  }
+
+  return (
+    <Card>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+        <div>
+          <Eyebrow>WEIGHT · LAST 8 WEEKS</Eyebrow>
+          <div className="display" style={{ fontSize: 18, fontWeight: 700, marginTop: 2 }}>
+            Trends
+          </div>
+        </div>
+        <Chip color={headerChip.tone}>{headerChip.label}</Chip>
+      </div>
+
+      <LatestWeightList latest={latest} memberById={memberById} selfUid={selfUid} />
+
+      {series.length > 0 ? (
+        <WeightTrendChart series={series} memberById={memberById} selfUid={selfUid} />
+      ) : (
+        <p
+          style={{
+            fontSize: 11,
+            color: 'var(--text-on-dark-faint)',
+            margin: '14px 0 0',
+            lineHeight: 1.5,
+            fontFamily: 'var(--f-mono)',
+            letterSpacing: '0.04em',
+          }}
+        >
+          TREND APPEARS WHEN ANY MEMBER HAS LOGGED ACROSS 2+ WEEKS.
+        </p>
+      )}
+    </Card>
+  );
+}
+
+type LatestEntry = {
+  memberId: string;
+  weightLb: number;
+  loggedAt: number;
+  /** Most recent log before this one, used for the small delta. */
+  prev?: { weightLb: number; loggedAt: number };
+};
+
+function latestByMember(logs: WeightRecord[]): LatestEntry[] {
+  const byMember = new Map<string, WeightRecord[]>();
+  for (const log of logs) {
+    const arr = byMember.get(log.memberId);
+    if (arr) arr.push(log);
+    else byMember.set(log.memberId, [log]);
+  }
+  return Array.from(byMember.entries()).map(([memberId, entries]) => {
+    const sorted = [...entries].sort((a, b) => b.loggedAt - a.loggedAt);
+    const newest = sorted[0]!;
+    const prev = sorted[1];
+    return {
+      memberId,
+      weightLb: newest.weightLb,
+      loggedAt: newest.loggedAt,
+      prev: prev ? { weightLb: prev.weightLb, loggedAt: prev.loggedAt } : undefined,
+    };
+  });
+}
+
+function LatestWeightList({
+  latest,
+  memberById,
+  selfUid,
+}: {
+  latest: LatestEntry[];
+  memberById: Record<string, GroupMemberDoc>;
+  selfUid: string | null;
+}) {
+  // Sort own row first.
+  const ordered = [...latest].sort((a, b) => {
+    if (a.memberId === selfUid) return -1;
+    if (b.memberId === selfUid) return 1;
+    return b.loggedAt - a.loggedAt;
+  });
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {ordered.map((e) => {
+        const member = memberById[e.memberId];
+        const dot = member?.color ?? '#daff3f';
+        const name = member?.name ?? 'Member';
+        const isSelf = e.memberId === selfUid;
+        const delta = e.prev ? e.weightLb - e.prev.weightLb : null;
+
+        return (
+          <div
+            key={e.memberId}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '8px 10px',
+              borderRadius: 10,
+              background: 'rgba(255,255,255,0.02)',
+              border: '1px solid rgba(255,255,255,0.04)',
+            }}
+          >
+            <span style={{ width: 8, height: 8, borderRadius: 4, background: dot, flexShrink: 0 }} />
+            <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>
+              {name}
+              {isSelf && (
+                <span
+                  className="mono"
+                  style={{ fontSize: 9, color: 'var(--text-on-dark-faint)', marginLeft: 6, letterSpacing: '0.1em' }}
+                >
+                  YOU
+                </span>
+              )}
+            </span>
+
+            {isSelf ? (
+              <>
+                <span style={{ fontFamily: 'var(--f-mono)', fontSize: 14, color: 'var(--text-on-dark)' }}>
+                  {e.weightLb.toFixed(1)}
+                  <span style={{ color: 'var(--text-on-dark-mute)', marginLeft: 4, fontSize: 11 }}>lb</span>
+                </span>
+                <span
+                  style={{
+                    fontFamily: 'var(--f-mono)',
+                    fontSize: 10,
+                    color:
+                      delta == null
+                        ? 'var(--text-on-dark-faint)'
+                        : delta < 0
+                          ? 'var(--lime)'
+                          : delta > 0
+                            ? 'var(--text-on-dark-mute)'
+                            : 'var(--text-on-dark-faint)',
+                    minWidth: 60,
+                    textAlign: 'right',
+                  }}
+                >
+                  {delta == null
+                    ? shortRelativeTime(e.loggedAt).toUpperCase()
+                    : `${delta < 0 ? '−' : delta > 0 ? '+' : ''}${Math.abs(delta).toFixed(1)} · ${shortRelativeTime(e.loggedAt).toUpperCase()}`}
+                </span>
+              </>
+            ) : (
+              // Crew row — no exact number, just "logged X ago" so they
+              // can still see momentum without seeing weight.
+              <span
+                style={{
+                  fontFamily: 'var(--f-mono)',
+                  fontSize: 10,
+                  color: 'var(--text-on-dark-mute)',
+                  letterSpacing: '0.1em',
+                }}
+              >
+                LOGGED {shortRelativeTime(e.loggedAt).toUpperCase()}
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function WeightTrendChart({
+  series,
+  memberById,
+  selfUid,
+}: {
+  series: ReturnType<typeof weeklyAveragesByMember>;
+  memberById: Record<string, GroupMemberDoc>;
+  selfUid: string | null;
+}) {
   const allWeights = series.flatMap((s) => s.points.map((p) => p.avgLb));
   const minLb = Math.min(...allWeights);
   const maxLb = Math.max(...allWeights);
@@ -618,73 +932,101 @@ function WeightTrendCard({
     return H - PAD_BOTTOM - ((lb - minLb) / range) * (H - PAD_TOP - PAD_BOTTOM);
   }
 
-  // Compute first→last delta for the largest-data series for the chip
-  const longest = series.reduce((a, b) => (a.points.length >= b.points.length ? a : b));
-  const delta = longest.points[longest.points.length - 1]!.avgLb - longest.points[0]!.avgLb;
-  const deltaSign = delta < 0 ? '−' : '+';
-  const deltaAbs = Math.abs(delta).toFixed(1);
+  // Render crew members first (faint silhouettes), then own series on top.
+  const crew = series.filter((s) => s.memberId !== selfUid);
+  const own = series.find((s) => s.memberId === selfUid);
 
   return (
-    <Card>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
-        <div>
-          <Eyebrow>WEIGHT · LAST 8 WEEKS</Eyebrow>
-          <div className="display" style={{ fontSize: 18, fontWeight: 700, marginTop: 2 }}>
-            Trends
-          </div>
-        </div>
-        <Chip color={delta < 0 ? 'lime' : 'ghost'}>
-          {deltaSign}
-          {deltaAbs} LB
-        </Chip>
-      </div>
+    <div style={{ marginTop: 14 }}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: H }} preserveAspectRatio="none">
-        {series.map((s) => {
-          const member = memberById[s.memberId];
-          const stroke = member?.color ?? '#daff3f';
+        {crew.map((s) => {
           const path = s.points
             .map((p, i) => `${i === 0 ? 'M' : 'L'}${xFor(p.weekStart).toFixed(1)},${yFor(p.avgLb).toFixed(1)}`)
             .join(' ');
           return (
-            <g key={s.memberId}>
-              <path d={path} stroke={stroke} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-              {s.points.map((p, i) => (
-                <circle key={i} cx={xFor(p.weekStart)} cy={yFor(p.avgLb)} r={3} fill={stroke} />
-              ))}
+            <g key={s.memberId} opacity={0.25}>
+              <path
+                d={path}
+                stroke="rgba(255,255,255,0.4)"
+                strokeWidth={1.5}
+                fill="none"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeDasharray="3 3"
+              />
             </g>
           );
         })}
+        {own && (
+          <g key={own.memberId}>
+            <path
+              d={own.points
+                .map((p, i) => `${i === 0 ? 'M' : 'L'}${xFor(p.weekStart).toFixed(1)},${yFor(p.avgLb).toFixed(1)}`)
+                .join(' ')}
+              stroke={memberById[own.memberId]?.color ?? '#daff3f'}
+              strokeWidth={2.5}
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            {own.points.map((p, i) => (
+              <circle
+                key={i}
+                cx={xFor(p.weekStart)}
+                cy={yFor(p.avgLb)}
+                r={3}
+                fill={memberById[own.memberId]?.color ?? '#daff3f'}
+              />
+            ))}
+          </g>
+        )}
       </svg>
-      <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
-        {series.map((s) => {
-          const member = memberById[s.memberId];
-          if (!member) return null;
-          return (
-            <div key={s.memberId} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
-              <span style={{ width: 8, height: 2, background: member.color }} />
-              {member.name}
-            </div>
-          );
-        })}
+      <div style={{ display: 'flex', gap: 12, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        {own && memberById[own.memberId] && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}>
+            <span style={{ width: 8, height: 2, background: memberById[own.memberId]!.color }} />
+            You
+          </div>
+        )}
+        {crew.length > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 11,
+              color: 'var(--text-on-dark-mute)',
+            }}
+          >
+            <span style={{ width: 8, height: 2, background: 'rgba(255,255,255,0.4)' }} />
+            Crew (private)
+          </div>
+        )}
       </div>
-    </Card>
+    </div>
   );
 }
 
 function BottomRow({
   meals,
+  workouts,
   memberById,
   inventory,
+  hasHousehold,
   weightLogs,
+  selfUid,
 }: {
   meals: MealRecord[];
+  workouts: WorkoutRecord[];
   memberById: Record<string, GroupMemberDoc>;
   inventory: InventoryRecord[];
+  hasHousehold: boolean;
   weightLogs: WeightRecord[];
+  selfUid: string | null;
 }) {
   return (
     <div className={styles.bottomGrid}>
-      <WeightTrendCard weightLogs={weightLogs} memberById={memberById} />
+      <WeightTrendCard weightLogs={weightLogs} memberById={memberById} selfUid={selfUid} />
 
       <Card>
         <div
@@ -702,14 +1044,22 @@ function BottomRow({
             </div>
           </div>
           <Chip color="ghost">
-            {inventory.length === 0
-              ? 'EMPTY'
-              : inventory.length >= 20
-                ? '20+ ITEMS'
-                : `${inventory.length} ITEM${inventory.length === 1 ? '' : 'S'}`}
+            {!hasHousehold
+              ? 'NO HOUSEHOLD'
+              : inventory.length === 0
+                ? 'EMPTY'
+                : inventory.length >= 20
+                  ? '20+ ITEMS'
+                  : `${inventory.length} ITEM${inventory.length === 1 ? '' : 'S'}`}
           </Chip>
         </div>
-        {inventory.length === 0 ? (
+        {!hasHousehold ? (
+          <p style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', margin: 0, lineHeight: 1.5 }}>
+            Inventory lives with the people you share a kitchen with. Tap{' '}
+            <Link href="/household" style={{ color: 'var(--lime)' }}>Household</Link>{' '}
+            to set one up.
+          </p>
+        ) : inventory.length === 0 ? (
           <p style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', margin: 0, lineHeight: 1.5 }}>
             No items yet. Tap <Link href="/log/groceries" style={{ color: 'var(--lime)' }}>Scan groceries</Link> to populate the pantry.
           </p>
@@ -758,75 +1108,13 @@ function BottomRow({
         )}
       </Card>
 
-      <Card>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'flex-start',
-            marginBottom: 14,
-          }}
-        >
-          <div>
-            <Eyebrow>CREW · LIVE</Eyebrow>
-            <div className="display" style={{ fontSize: 18, fontWeight: 700, marginTop: 2 }}>
-              Recent
-            </div>
-          </div>
-          <Icon name="chat" size={18} color="rgba(245,243,238,0.5)" />
-        </div>
-        {meals.length === 0 ? (
-          <div style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', padding: '16px 0' }}>
-            No activity in the last 7 days. Log a meal to see it here.
-          </div>
-        ) : (
-          meals.slice(0, 5).map((meal, i, arr) => {
-            const member = memberById[meal.memberId];
-            const name = member?.name ?? 'Member';
-            const initials = member?.initials ?? '?';
-            const color = member?.color ?? 'var(--lime)';
-            const summary = mealSummary(meal);
-            return (
-              <div
-                key={meal.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  gap: 10,
-                  padding: '10px 0',
-                  borderBottom: i < arr.length - 1 ? '1px solid rgba(255,255,255,0.04)' : 'none',
-                }}
-              >
-                <Avatar initials={initials} color={color} size={28} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 12, fontWeight: 600 }}>{name}</span>
-                    <span
-                      className="mono"
-                      style={{ fontSize: 10, color: 'var(--text-on-dark-faint)' }}
-                    >
-                      {shortRelativeTime(meal.loggedAt)}
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: 'var(--text-on-dark-mute)',
-                      marginTop: 2,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {summary}
-                  </div>
-                </div>
-                <Chip color="ghost">MEAL</Chip>
-              </div>
-            );
-          })
-        )}
-      </Card>
+      <CrewFeedCard
+        meals={meals}
+        workouts={workouts}
+        weightLogs={weightLogs}
+        memberById={memberById}
+        selfUid={selfUid}
+      />
     </div>
   );
 }
@@ -836,18 +1124,208 @@ function formatQuantity(q: number): string {
   return q.toFixed(2).replace(/\.?0+$/, '');
 }
 
-function mealSummary(meal: MealRecord): string {
-  const cal = Math.round(meal.totals.calories);
-  const protein = Math.round(meal.totals.proteinG);
-  const lead =
-    meal.items.length > 0
-      ? meal.items
-          .slice(0, 2)
-          .map((it) => it.name)
-          .join(', ') + (meal.items.length > 2 ? '…' : '')
-      : 'Logged meal';
-  return `${lead} · ${cal} cal · ${protein}g protein`;
+/* ── Your achievements row ───────────────────────────────────────────── */
+
+function YourAchievementsRow({ achievements }: { achievements: EarnedAchievement[] }) {
+  if (achievements.length === 0) return null;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          padding: '0 4px',
+        }}
+      >
+        <Eyebrow>YOUR ACHIEVEMENTS</Eyebrow>
+        <span
+          className="mono"
+          style={{ fontSize: 10, color: 'var(--text-on-dark-faint)', letterSpacing: '0.1em' }}
+        >
+          {achievements.length} EARNED
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {achievements.map((a) => (
+          <BadgeChip key={a.def.id} achievement={a} />
+        ))}
+      </div>
+    </div>
+  );
 }
+
+function BadgeChip({ achievement }: { achievement: EarnedAchievement }) {
+  const color = TIER_COLOR[achievement.def.tier];
+  return (
+    <div
+      title={achievement.def.description}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '8px 12px',
+        borderRadius: 999,
+        border: `1px solid ${color}66`,
+        background: `${color}1a`,
+        fontSize: 12,
+        fontFamily: 'var(--f-ui)',
+        fontWeight: 600,
+      }}
+    >
+      <span
+        style={{
+          width: 18,
+          height: 18,
+          borderRadius: 9,
+          background: color,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+        }}
+      >
+        <Icon name={achievement.def.icon} size={11} color="#0a0a0a" strokeWidth={2.2} />
+      </span>
+      <span style={{ color: 'var(--text-on-dark)' }}>{achievement.def.label}</span>
+      <span
+        className="mono"
+        style={{
+          fontSize: 9,
+          color: 'var(--text-on-dark-mute)',
+          letterSpacing: '0.1em',
+          textTransform: 'uppercase',
+        }}
+      >
+        {achievement.def.tier}
+      </span>
+    </div>
+  );
+}
+
+/* ── Crew feed card ──────────────────────────────────────────────────── */
+
+function CrewFeedCard({
+  meals,
+  workouts,
+  weightLogs,
+  memberById,
+  selfUid,
+}: {
+  meals: MealRecord[];
+  workouts: WorkoutRecord[];
+  weightLogs: WeightRecord[];
+  memberById: Record<string, GroupMemberDoc>;
+  selfUid: string | null;
+}) {
+  const items = useMemo<CrewFeedItem[]>(() => {
+    const buckets = new Map<string, { meals: MealRecord[]; workouts: WorkoutRecord[]; weightLogs: WeightRecord[] }>();
+    const ensure = (uid: string) => {
+      let b = buckets.get(uid);
+      if (!b) {
+        b = { meals: [], workouts: [], weightLogs: [] };
+        buckets.set(uid, b);
+      }
+      return b;
+    };
+    for (const m of meals) ensure(m.memberId).meals.push(m);
+    for (const w of workouts) ensure(w.memberId).workouts.push(w);
+    for (const wl of weightLogs) ensure(wl.memberId).weightLogs.push(wl);
+
+    const perMember = Array.from(buckets.entries()).map(([memberUid, b]) => ({
+      memberUid,
+      meals: b.meals,
+      workouts: b.workouts,
+      weightLogs: b.weightLogs,
+    }));
+
+    return computeCrewFeed(perMember, selfUid);
+  }, [meals, workouts, weightLogs, selfUid]);
+
+  return (
+    <Card>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+        <div>
+          <Eyebrow>CREW · MILESTONES</Eyebrow>
+          <div className="display" style={{ fontSize: 18, fontWeight: 700, marginTop: 2 }}>
+            Activity feed
+          </div>
+        </div>
+      </div>
+
+      {items.length === 0 ? (
+        <p style={{ fontSize: 12, color: 'var(--text-on-dark-mute)', margin: 0, lineHeight: 1.5 }}>
+          No milestones yet. Log meals and workouts to start unlocking achievements — your crew sees the badges, not the numbers.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {items.slice(0, 6).map((item) => (
+            <CrewFeedRow key={item.id} item={item} member={memberById[item.memberUid]} />
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function CrewFeedRow({ item, member }: { item: CrewFeedItem; member: GroupMemberDoc | undefined }) {
+  const name = member?.name ?? 'Member';
+  const initials = member?.initials ?? '?';
+  const color = member?.color ?? 'var(--lime)';
+  const isPositive = item.tone === 'positive';
+  const accent = isPositive ? 'var(--lime)' : 'var(--coral)';
+  const ringBg = isPositive ? 'rgba(218,255,63,0.06)' : 'rgba(255,107,74,0.06)';
+  const ringBorder = isPositive ? 'rgba(218,255,63,0.18)' : 'rgba(255,107,74,0.22)';
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 10,
+        padding: '10px 12px',
+        borderRadius: 12,
+        background: ringBg,
+        border: `1px solid ${ringBorder}`,
+      }}
+    >
+      <Avatar initials={initials} color={color} size={28} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 12, fontWeight: 600 }}>{name}</span>
+          <span
+            className="mono"
+            style={{ fontSize: 9, color: 'var(--text-on-dark-faint)', letterSpacing: '0.1em' }}
+          >
+            {item.kind === 'achievement' ? 'BADGE' : item.kind === 'kudos' ? 'STREAK' : 'NUDGE'}
+          </span>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-on-dark)', marginTop: 2, lineHeight: 1.4 }}>
+          {item.title}
+        </div>
+        <div
+          style={{
+            ...(monoSmall),
+            color: accent,
+            marginTop: 4,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
+        >
+          <Icon name={item.icon} size={10} color={accent} strokeWidth={2} />
+          {item.cta.toUpperCase()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const monoSmall: CSSProperties = {
+  fontFamily: 'var(--f-mono)',
+  fontSize: 10,
+  letterSpacing: '0.1em',
+};
 
 /* ── Empty / loading states ──────────────────────────────────────────── */
 
@@ -877,6 +1355,215 @@ function FullPageNote({ title, body }: { title: string; body?: string }) {
     </div>
   );
 }
+
+/* ── Invite button + modal ───────────────────────────────────────────── */
+
+function InviteButton({ groupName, inviteCode }: { groupName: string; inviteCode: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="btn btn-lime"
+        style={{
+          padding: '8px 12px',
+          fontSize: 12,
+          fontFamily: 'var(--f-ui)',
+          fontWeight: 600,
+        }}
+      >
+        <Icon name="plus" size={13} color="#0a0a0a" strokeWidth={2.5} />
+        Invite
+      </button>
+      {open && <InviteModal groupName={groupName} inviteCode={inviteCode} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function InviteModal({
+  groupName,
+  inviteCode,
+  onClose,
+}: {
+  groupName: string;
+  inviteCode: string;
+  onClose: () => void;
+}) {
+  const [copied, setCopied] = useState<'code' | 'link' | null>(null);
+  const inviteUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/onboarding/join?code=${inviteCode}`
+      : `/onboarding/join?code=${inviteCode}`;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const copy = async (text: string, kind: 'code' | 'link') => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(kind);
+      window.setTimeout(() => setCopied((c) => (c === kind ? null : c)), 1500);
+    } catch {
+      // Clipboard API unavailable (insecure context, etc) — silently no-op.
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.6)',
+        backdropFilter: 'blur(4px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 20,
+        zIndex: 100,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--ink-card)',
+          color: 'var(--text-on-dark)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          borderRadius: 22,
+          padding: '24px 22px',
+          width: '100%',
+          maxWidth: 460,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 16,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+          <div>
+            <Eyebrow>INVITE TO {groupName.toUpperCase()}</Eyebrow>
+            <div style={{ ...display, fontSize: 22, fontWeight: 700, marginTop: 4 }}>
+              Add someone to your pact
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--text-on-dark-mute)',
+              cursor: 'pointer',
+              padding: 4,
+              borderRadius: 8,
+            }}
+          >
+            <Icon name="x" size={18} />
+          </button>
+        </div>
+
+        <p style={{ fontSize: 13, color: 'var(--text-on-dark-mute)', margin: 0, lineHeight: 1.5 }}>
+          Share the link or just the code. Pacts max out at 6 — close circles only.
+        </p>
+
+        <div
+          style={{
+            background: 'rgba(218,255,63,0.08)',
+            border: '1px solid rgba(218,255,63,0.2)',
+            borderRadius: 14,
+            padding: '16px 18px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 10,
+          }}
+        >
+          <div style={{ ...mono, fontSize: 10, color: 'var(--text-on-dark-mute)', letterSpacing: '0.1em' }}>
+            CODE
+          </div>
+          <div
+            style={{
+              ...display,
+              fontSize: 32,
+              fontWeight: 800,
+              letterSpacing: '0.04em',
+              color: 'var(--lime)',
+              wordBreak: 'break-all',
+            }}
+          >
+            {inviteCode}
+          </div>
+          <button
+            type="button"
+            onClick={() => copy(inviteCode, 'code')}
+            className="btn btn-ghost-dark"
+            style={{ padding: '10px 14px', fontSize: 13, alignSelf: 'flex-start' }}
+          >
+            {copied === 'code' ? 'Copied!' : 'Copy code'}
+            <Icon
+              name={copied === 'code' ? 'check' : 'upload'}
+              size={13}
+              color="currentColor"
+              strokeWidth={2}
+            />
+          </button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ ...mono, fontSize: 10, color: 'var(--text-on-dark-mute)', letterSpacing: '0.1em' }}>
+            INVITE LINK
+          </div>
+          <div
+            style={{
+              ...mono,
+              fontSize: 12,
+              color: 'var(--text-on-dark-mute)',
+              padding: '10px 12px',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 10,
+              background: 'rgba(255,255,255,0.02)',
+              wordBreak: 'break-all',
+            }}
+          >
+            {inviteUrl}
+          </div>
+          <button
+            type="button"
+            onClick={() => copy(inviteUrl, 'link')}
+            className="btn btn-lime"
+            style={{ padding: '12px 16px', fontSize: 13, alignSelf: 'flex-start' }}
+          >
+            {copied === 'link' ? 'Copied!' : 'Copy link'}
+            <Icon
+              name={copied === 'link' ? 'check' : 'upload'}
+              size={13}
+              color="#0a0a0a"
+              strokeWidth={2.5}
+            />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const display: CSSProperties = {
+  fontFamily: 'var(--f-display)',
+  letterSpacing: '-0.02em',
+};
+
+const mono: CSSProperties = {
+  fontFamily: 'var(--f-mono)',
+};
+
+/* ── No group prompt ─────────────────────────────────────────────────── */
 
 function NoGroupPrompt() {
   return (

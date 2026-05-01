@@ -14,6 +14,8 @@ export type UserProfile = {
   email: string | null;
   phoneNumber: string | null;
   currentGroupId: string | null;
+  /** The household this user is sharing inventory + shopping with. Independent of pact. */
+  currentHouseholdId: string | null;
   createdAt: number; // ms; serverTimestamp resolves async
 };
 
@@ -53,6 +55,7 @@ export async function ensureUserProfile(authUser: User): Promise<UserProfile> {
     email: authUser.email,
     phoneNumber: authUser.phoneNumber,
     currentGroupId: null,
+    currentHouseholdId: null,
     createdAt: Date.now(),
   };
 
@@ -67,4 +70,9 @@ export async function ensureUserProfile(authUser: User): Promise<UserProfile> {
 export async function setCurrentGroup(uid: string, groupId: string): Promise<void> {
   const { db } = getFirebase();
   await setDoc(doc(db, 'users', uid), { currentGroupId: groupId }, { merge: true });
+}
+
+export async function setCurrentHousehold(uid: string, householdId: string): Promise<void> {
+  const { db } = getFirebase();
+  await setDoc(doc(db, 'users', uid), { currentHouseholdId: householdId }, { merge: true });
 }

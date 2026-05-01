@@ -8,12 +8,23 @@ import { getFirebase } from '@/lib/firebase';
 import { logMeal } from '@/lib/meal-log';
 import type { MealParseResult } from '@pact/types';
 
-type ParsedSlot = {
+type Mode = 'photo' | 'describe';
+
+type PhotoSlot = {
+  kind: 'photo';
   result: MealParseResult;
   preview: string;
   blob: Blob;
   mediaType: string;
 };
+
+type DescribeSlot = {
+  kind: 'describe';
+  result: MealParseResult;
+  description: string;
+};
+
+type ParsedSlot = PhotoSlot | DescribeSlot;
 
 type State =
   | { status: 'idle' }
@@ -25,10 +36,18 @@ type State =
   | { status: 'error'; message: string };
 
 const ALLOWED = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const MAX_DESCRIPTION_LEN = 4000;
 
 export default function MealVisionDevPage() {
   const { user, profile, loading } = useAuth();
+  const [mode, setMode] = useState<Mode>('photo');
+  const [description, setDescription] = useState('');
   const [state, setState] = useState<State>({ status: 'idle' });
+
+  const busy =
+    state.status === 'uploading' ||
+    state.status === 'analyzing' ||
+    state.status === 'logging';
 
   const handleFile = async (file: File) => {
     if (!ALLOWED.includes(file.type)) {
@@ -67,7 +86,48 @@ export default function MealVisionDevPage() {
       const result = (await res.json()) as MealParseResult;
       setState({
         status: 'done',
-        parsed: { result, preview, blob: file, mediaType: file.type },
+        parsed: { kind: 'photo', result, preview, blob: file, mediaType: file.type },
+      });
+    } catch (err) {
+      setState({ status: 'error', message: err instanceof Error ? err.message : 'Request failed' });
+    }
+  };
+
+  const handleDescribe = async () => {
+    const trimmed = description.trim();
+    if (!trimmed) {
+      setState({ status: 'error', message: 'Tell us what you ate first.' });
+      return;
+    }
+    if (trimmed.length > MAX_DESCRIPTION_LEN) {
+      setState({ status: 'error', message: `Description too long (max ${MAX_DESCRIPTION_LEN} chars).` });
+      return;
+    }
+
+    setState({ status: 'analyzing' });
+    try {
+      const { auth } = getFirebase();
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error('Not signed in');
+
+      const res = await fetch('/api/text/meal', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ description: trimmed }),
+      });
+
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+
+      const result = (await res.json()) as MealParseResult;
+      setState({
+        status: 'done',
+        parsed: { kind: 'describe', result, description: trimmed },
       });
     } catch (err) {
       setState({ status: 'error', message: err instanceof Error ? err.message : 'Request failed' });
@@ -86,16 +146,33 @@ export default function MealVisionDevPage() {
 
     setState({ status: 'logging', parsed: state.parsed });
     try {
-      const { mealId } = await logMeal({
-        uid: user.uid,
-        groupId: profile.currentGroupId,
-        parsed: state.parsed.result,
-        photo: { blob: state.parsed.blob, mediaType: state.parsed.mediaType },
-      });
+      const { mealId } = await logMeal(
+        state.parsed.kind === 'photo'
+          ? {
+              uid: user.uid,
+              groupId: profile.currentGroupId,
+              parsed: state.parsed.result,
+              photo: { blob: state.parsed.blob, mediaType: state.parsed.mediaType },
+              source: 'vision',
+            }
+          : {
+              uid: user.uid,
+              groupId: profile.currentGroupId,
+              parsed: state.parsed.result,
+              description: state.parsed.description,
+              source: 'description',
+            },
+      );
       setState({ status: 'logged', parsed: state.parsed, mealId });
     } catch (err) {
       setState({ status: 'error', message: err instanceof Error ? err.message : 'Could not save meal' });
     }
+  };
+
+  const switchMode = (next: Mode) => {
+    if (busy) return;
+    setMode(next);
+    setState({ status: 'idle' });
   };
 
   return (
@@ -114,8 +191,8 @@ export default function MealVisionDevPage() {
             What did you eat?
           </h1>
           <p style={{ fontSize: 13, color: 'var(--text-on-dark-mute)', margin: 0, lineHeight: 1.5 }}>
-            Drop in a meal photo. We&rsquo;ll estimate macros and log it to your pact. The photo
-            is cleared after 24 hours; the macros stay.
+            Snap a photo or just describe it. We&rsquo;ll estimate macros and log it to your
+            pact. Photos are cleared after 24 hours; the macros stay.
           </p>
         </div>
 
@@ -129,14 +206,18 @@ export default function MealVisionDevPage() {
 
         {user && (
           <>
-            <FileDrop
-              onFile={handleFile}
-              disabled={
-                state.status === 'uploading' ||
-                state.status === 'analyzing' ||
-                state.status === 'logging'
-              }
-            />
+            <ModeToggle mode={mode} onChange={switchMode} disabled={busy} />
+
+            {mode === 'photo' ? (
+              <FileDrop onFile={handleFile} disabled={busy} />
+            ) : (
+              <DescribeInput
+                value={description}
+                onChange={setDescription}
+                onSubmit={handleDescribe}
+                disabled={busy}
+              />
+            )}
 
             {state.status === 'uploading' && <Pulse label="Reading file…" />}
             {state.status === 'analyzing' && <Pulse label="Asking Claude…" />}
@@ -149,8 +230,7 @@ export default function MealVisionDevPage() {
             )}
             {(state.status === 'done' || state.status === 'logging' || state.status === 'logged') && (
               <Result
-                result={state.parsed.result}
-                preview={state.parsed.preview}
+                parsed={state.parsed}
                 onLog={state.status === 'done' ? handleLog : undefined}
                 logged={state.status === 'logged' ? state.mealId : undefined}
                 inGroup={!!profile?.currentGroupId}
@@ -160,6 +240,69 @@ export default function MealVisionDevPage() {
         )}
       </div>
     </main>
+  );
+}
+
+function ModeToggle({
+  mode,
+  onChange,
+  disabled,
+}: {
+  mode: Mode;
+  onChange: (next: Mode) => void;
+  disabled: boolean;
+}) {
+  const options: Array<{ key: Mode; label: string; icon: 'camera' | 'chat' }> = [
+    { key: 'photo', label: 'Photo', icon: 'camera' },
+    { key: 'describe', label: 'Describe', icon: 'chat' },
+  ];
+  return (
+    <div
+      role="tablist"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: 6,
+        padding: 4,
+        borderRadius: 12,
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid rgba(255,255,255,0.06)',
+      }}
+    >
+      {options.map((opt) => {
+        const active = opt.key === mode;
+        return (
+          <button
+            key={opt.key}
+            role="tab"
+            type="button"
+            aria-selected={active}
+            disabled={disabled}
+            onClick={() => onChange(opt.key)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              padding: '10px 14px',
+              borderRadius: 8,
+              border: 'none',
+              background: active ? 'var(--lime)' : 'transparent',
+              color: active ? '#0a0a0a' : 'var(--text-on-dark)',
+              fontFamily: 'var(--f-ui)',
+              fontWeight: 600,
+              fontSize: 13,
+              cursor: disabled ? 'not-allowed' : 'pointer',
+              opacity: disabled && !active ? 0.5 : 1,
+              transition: 'background 0.15s ease, color 0.15s ease',
+            }}
+          >
+            <Icon name={opt.icon} size={14} color={active ? '#0a0a0a' : 'var(--text-on-dark-mute)'} />
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -210,6 +353,71 @@ function FileDrop({ onFile, disabled }: { onFile: (f: File) => void; disabled: b
   );
 }
 
+function DescribeInput({
+  value,
+  onChange,
+  onSubmit,
+  disabled,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  onSubmit: () => void;
+  disabled: boolean;
+}) {
+  const remaining = MAX_DESCRIPTION_LEN - value.length;
+  const canSubmit = !disabled && value.trim().length > 0 && remaining >= 0;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        placeholder="A 3-egg omelette with cheese, onion, and pepper. Side of toast, black coffee."
+        rows={5}
+        style={{
+          width: '100%',
+          padding: 16,
+          borderRadius: 16,
+          border: '1.5px solid rgba(255,255,255,0.12)',
+          background: 'rgba(255,255,255,0.04)',
+          color: 'var(--text-on-dark)',
+          fontFamily: 'var(--f-ui)',
+          fontSize: 14,
+          lineHeight: 1.5,
+          resize: 'vertical',
+          outline: 'none',
+        }}
+      />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+        <span
+          style={{
+            ...mono,
+            fontSize: 11,
+            color: remaining < 0 ? 'var(--coral)' : 'var(--text-on-dark-mute)',
+          }}
+        >
+          {remaining} CHARS LEFT
+        </span>
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={!canSubmit}
+          className="btn btn-lime"
+          style={{
+            padding: '12px 18px',
+            fontSize: 14,
+            opacity: canSubmit ? 1 : 0.5,
+            cursor: canSubmit ? 'pointer' : 'not-allowed',
+          }}
+        >
+          Estimate macros
+          <Icon name="check" size={14} color="#0a0a0a" strokeWidth={2.5} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Pulse({ label }: { label: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: 32 }}>
@@ -235,24 +443,32 @@ function Pulse({ label }: { label: string }) {
 }
 
 function Result({
-  result,
-  preview,
+  parsed,
   onLog,
   logged,
   inGroup,
 }: {
-  result: MealParseResult;
-  preview: string;
+  parsed: ParsedSlot;
   onLog?: () => void;
   logged?: string;
   inGroup: boolean;
 }) {
+  const { result } = parsed;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <div style={{ borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.06)' }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={preview} alt="meal" style={{ display: 'block', width: '100%', maxHeight: 320, objectFit: 'cover' }} />
-      </div>
+      {parsed.kind === 'photo' ? (
+        <div style={{ borderRadius: 16, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.06)' }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={parsed.preview} alt="meal" style={{ display: 'block', width: '100%', maxHeight: 320, objectFit: 'cover' }} />
+        </div>
+      ) : (
+        <Card>
+          <Eyebrow>YOUR DESCRIPTION</Eyebrow>
+          <p style={{ fontSize: 13, marginTop: 6, marginBottom: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+            {parsed.description}
+          </p>
+        </Card>
+      )}
 
       <Card>
         <Eyebrow>TOTAL</Eyebrow>

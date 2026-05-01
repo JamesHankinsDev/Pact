@@ -82,6 +82,28 @@ export interface WorkoutSession {
   exercises: Exercise[];
 }
 
+/**
+ * Shape returned by the report_workout tool when AI parses a photo or
+ * description. Sets are flattened — convert to ExerciseSet on save.
+ */
+export interface WorkoutParseExercise {
+  name: string;
+  sets: Array<{ reps: number; weight: number; rpe?: number }>;
+  notes?: string;
+}
+
+export interface WorkoutParseResult {
+  title: string;
+  tag: ExerciseTag;
+  durationMin?: number;
+  exercises: WorkoutParseExercise[];
+  /** Low end of estimated calories burned. Optional. */
+  caloriesBurnedLow?: number;
+  /** High end of estimated calories burned. Optional. */
+  caloriesBurnedHigh?: number;
+  notes?: string;
+}
+
 export interface Macros {
   calories: number;
   proteinG: number;
@@ -114,6 +136,10 @@ export interface MealParseItem {
 export interface MealParseResult {
   items: MealParseItem[];
   totals: Macros;
+  /** Low end of the AI's calorie estimate band for this meal. Optional. */
+  caloriesLow?: number;
+  /** High end of the AI's calorie estimate band for this meal. Optional. */
+  caloriesHigh?: number;
   notes?: string;
 }
 
@@ -126,8 +152,11 @@ export interface MealLog {
   storagePath?: string;  // gs://-style path so we can revoke or move later
   items: MealParseItem[];
   totals: Macros;
+  caloriesLow?: number;
+  caloriesHigh?: number;
   notes?: string;
-  source: 'vision' | 'manual';
+  description?: string;  // user-typed text when source === 'description'
+  source: 'vision' | 'description' | 'manual';
   edited: boolean;       // true if user corrected vision output
 }
 

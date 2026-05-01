@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": ""
-  }
+    "default": "",
+    "Pact": "pact-c4537"
+  },
+  "targets": {},
+  "etags": {}
 }

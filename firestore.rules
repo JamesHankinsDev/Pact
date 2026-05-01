@@ -12,6 +12,11 @@ service cloud.firestore {
         && request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.memberUids;
     }
 
+    function isHouseholdMember(householdId) {
+      return signedIn()
+        && request.auth.uid in get(/databases/$(database)/documents/households/$(householdId)).data.memberUids;
+    }
+
     // A user owns their own profile doc.
     match /users/{userId} {
       allow read: if signedIn() && request.auth.uid == userId;
@@ -27,6 +32,12 @@ service cloud.firestore {
       match /medTicks/{tickId} {
         allow read, write: if signedIn() && request.auth.uid == userId;
       }
+
+      // Owner-only docs for body composition + nutrition goals (and any
+      // future personal-only docs). Crew never sees this.
+      match /private/{docId} {
+        allow read, write: if signedIn() && request.auth.uid == userId;
+      }
     }
 
     // Public-readable invite codes — used to look up groupId on the join flow.
@@ -36,6 +47,54 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.creatorUid == request.auth.uid;
       allow update, delete: if false;
+    }
+
+    // Mirror invite-code pattern for households. Household IDs live behind
+    // these codes and are only useful once you've joined.
+    match /householdInviteCodes/{code} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.creatorUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Households are private to their members. Same self-add-via-known-code
+    // pattern as groups — non-members can append only their own uid, max 6.
+    // Inventory + shopping subcollections will live under here as we migrate
+    // off the pact-scoped equivalents.
+    match /households/{householdId} {
+      allow read: if isHouseholdMember(householdId);
+      allow create: if signedIn()
+        && request.auth.uid in request.resource.data.memberUids
+        && request.resource.data.memberUids.size() <= 6;
+      allow update: if isHouseholdMember(householdId)
+        || (
+          signedIn()
+          && !isHouseholdMember(householdId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids', 'updatedAt'])
+          && request.resource.data.memberUids.size() == resource.data.memberUids.size() + 1
+          && request.auth.uid in request.resource.data.memberUids
+          && resource.data.memberUids.size() < 6
+        );
+      allow delete: if false;
+
+      match /members/{uid} {
+        allow read: if isHouseholdMember(householdId);
+        allow create, update: if signedIn()
+          && request.auth.uid == uid
+          && isHouseholdMember(householdId)
+          && request.resource.data.uid == uid;
+        allow delete: if false;
+      }
+
+      // Reserved for the inventory + shopping migration. For now no one writes
+      // to these paths — everything still goes through groups/{id}/inventory.
+      match /inventory/{itemId} {
+        allow read, write: if isHouseholdMember(householdId);
+      }
+      match /shoppingLists/{listId} {
+        allow read, write: if isHouseholdMember(householdId);
+      }
     }
 
     // Groups are private to their members. The creator must include themselves
@@ -102,10 +161,13 @@ service cloud.firestore {
       match /shoppingLists/{listId} {
         allow read, write: if isMember(groupId);
       }
+      // Inventory has moved to /households/{id}/inventory. Existing pact
+      // inventory stays readable so historical data isn't lost, but no new
+      // writes are allowed at this path — the app routes everything to the
+      // household subcollection now.
       match /inventory/{itemId} {
-        // Shared pantry — any member can read or modify, write tracks the
-        // adding/updating member via the addedBy/updatedBy fields.
-        allow read, write: if isMember(groupId);
+        allow read: if isMember(groupId);
+        allow create, update, delete: if false;
       }
       match /feed/{itemId} {
         allow read, write: if isMember(groupId);

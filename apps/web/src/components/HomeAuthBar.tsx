@@ -23,8 +23,27 @@ export function HomeAuthBar() {
   if (user && profile) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <Avatar initials={profile.initials} color={profile.color} size={26} />
-        <span style={{ fontSize: 13, color: 'var(--text-on-dark)' }}>{profile.displayName}</span>
+        <Link
+          href="/settings"
+          aria-label="Settings"
+          title="Settings"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            padding: '4px 10px 4px 4px',
+            borderRadius: 999,
+            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.06)',
+            textDecoration: 'none',
+            color: 'var(--text-on-dark)',
+            transition: 'background 0.15s ease, border-color 0.15s ease',
+          }}
+          className="auth-bar-avatar"
+        >
+          <Avatar initials={profile.initials} color={profile.color} size={26} />
+          <span style={{ fontSize: 13 }}>{profile.displayName}</span>
+        </Link>
         <button
           type="button"
           onClick={() => void signOut()}

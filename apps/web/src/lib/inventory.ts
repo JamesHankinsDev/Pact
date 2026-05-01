@@ -1,12 +1,33 @@
 'use client';
 
-import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore';
+import {
+  Timestamp,
+  collection,
+  doc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  serverTimestamp,
+  writeBatch,
+} from 'firebase/firestore';
 import { getFirebase } from './firebase';
 import type { ReceiptParseResult } from '@pact/types';
 
+export type InventoryRecord = {
+  id: string;
+  name: string;
+  quantity: number;
+  unit: string;
+  estCost: number | null;
+  source: string;
+  addedBy: string | null;
+  addedAt: number;
+};
+
 type SaveReceiptInput = {
   uid: string;
-  groupId: string;
+  householdId: string;
   parsed: ReceiptParseResult;
 };
 
@@ -17,10 +38,9 @@ export type SaveReceiptResult = {
 
 /**
  * Write each parsed receipt item as its own inventory doc under
- * groups/{groupId}/inventory. All items from one receipt share a receiptId
- * so we can group them in the UI later (e.g. "added from Whole Foods,
- * Tuesday"). No deduplication against existing inventory yet — that's a
- * follow-up; for now duplicate names just stack.
+ * households/{householdId}/inventory. All items from one receipt share a
+ * receiptId so we can group them in the UI later. Inventory is household-
+ * scoped (people you actually share a kitchen with), independent of pact.
  */
 export async function saveReceipt(input: SaveReceiptInput): Promise<SaveReceiptResult> {
   const { db } = getFirebase();
@@ -31,10 +51,10 @@ export async function saveReceipt(input: SaveReceiptInput): Promise<SaveReceiptR
 
   const batch = writeBatch(db);
   for (const item of input.parsed.items) {
-    const ref = doc(collection(db, 'groups', input.groupId, 'inventory'));
+    const ref = doc(collection(db, 'households', input.householdId, 'inventory'));
     batch.set(ref, {
       id: ref.id,
-      groupId: input.groupId,
+      householdId: input.householdId,
       name: item.name,
       quantity: item.quantity,
       unit: item.unit,
@@ -49,4 +69,40 @@ export async function saveReceipt(input: SaveReceiptInput): Promise<SaveReceiptR
   await batch.commit();
 
   return { receiptId, count: input.parsed.items.length };
+}
+
+/** Load latest inventory items for a household, newest first. */
+export async function loadHouseholdInventory(
+  householdId: string,
+  max = 20,
+): Promise<InventoryRecord[]> {
+  const { db } = getFirebase();
+  const snap = await getDocs(
+    query(
+      collection(db, 'households', householdId, 'inventory'),
+      orderBy('addedAt', 'desc'),
+      limit(max),
+    ),
+  );
+  return snap.docs.map((d) => {
+    const raw = d.data() as {
+      name?: string;
+      quantity?: number;
+      unit?: string;
+      estCost?: number | null;
+      source?: string;
+      addedBy?: string;
+      addedAt?: Timestamp;
+    };
+    return {
+      id: d.id,
+      name: raw.name ?? 'Unknown',
+      quantity: raw.quantity ?? 0,
+      unit: raw.unit ?? 'ea',
+      estCost: raw.estCost ?? null,
+      source: raw.source ?? 'manual',
+      addedBy: raw.addedBy ?? null,
+      addedAt: raw.addedAt?.toMillis() ?? 0,
+    };
+  });
 }

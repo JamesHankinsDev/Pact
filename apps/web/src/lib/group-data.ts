@@ -45,18 +45,6 @@ export type WeekPactRecord = {
   memberUids: string[];
 };
 
-/** UI-shaped inventory record — addedAt flattened to ms. */
-export type InventoryRecord = {
-  id: string;
-  name: string;
-  quantity: number;
-  unit: string;
-  estCost: number | null;
-  source: string;
-  addedBy: string | null;
-  addedAt: number;
-};
-
 export type DashboardData = {
   group: DashboardGroup;
   members: GroupMemberDoc[];
@@ -68,8 +56,6 @@ export type DashboardData = {
   weightLogs: WeightRecord[];
   /** This week's signed pact, if any. */
   pact: WeekPactRecord | null;
-  /** Latest inventory items, newest first (capped at 20). */
-  inventory: InventoryRecord[];
 };
 
 const WEIGHT_LOOKBACK_MS = 9 * 7 * 24 * 60 * 60 * 1000; // 9 weeks of buffer for "last 8 weeks" charts
@@ -91,7 +77,7 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
 
   const weightSinceTs = Timestamp.fromMillis(Date.now() - WEIGHT_LOOKBACK_MS);
 
-  const [membersSnap, mealsSnap, pactSnap, inventorySnap, workoutsSnap, weightSnap] = await Promise.all([
+  const [membersSnap, mealsSnap, pactSnap, workoutsSnap, weightSnap] = await Promise.all([
     getDocs(query(collection(db, 'groups', groupId, 'members'), orderBy('joinedAt', 'asc'))),
     getDocs(
       query(
@@ -102,13 +88,6 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
       ),
     ),
     getDoc(doc(db, 'groups', groupId, 'pacts', group.currentWeek)),
-    getDocs(
-      query(
-        collection(db, 'groups', groupId, 'inventory'),
-        orderBy('addedAt', 'desc'),
-        limit(20),
-      ),
-    ),
     getDocs(
       query(
         collection(db, 'groups', groupId, 'workouts'),
@@ -149,28 +128,6 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
     };
   });
 
-  const inventory: InventoryRecord[] = inventorySnap.docs.map((d) => {
-    const raw = d.data() as {
-      name?: string;
-      quantity?: number;
-      unit?: string;
-      estCost?: number | null;
-      source?: string;
-      addedBy?: string;
-      addedAt?: Timestamp;
-    };
-    return {
-      id: d.id,
-      name: raw.name ?? 'Unknown',
-      quantity: raw.quantity ?? 0,
-      unit: raw.unit ?? 'ea',
-      estCost: raw.estCost ?? null,
-      source: raw.source ?? 'manual',
-      addedBy: raw.addedBy ?? null,
-      addedAt: raw.addedAt?.toMillis() ?? 0,
-    };
-  });
-
   const pact: WeekPactRecord | null = pactSnap.exists()
     ? (() => {
         const r = pactSnap.data() as {
@@ -191,7 +148,7 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
   const workouts: WorkoutRecord[] = workoutsSnap.docs.map((d) => workoutFromSnap(d));
   const weightLogs: WeightRecord[] = weightSnap.docs.map((d) => weightFromSnap(d));
 
-  return { group, members, meals, workouts, weightLogs, pact, inventory };
+  return { group, members, meals, workouts, weightLogs, pact };
 }
 
 /** Sum macros across a list of meals. */
