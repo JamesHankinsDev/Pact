@@ -60,8 +60,10 @@ export type DashboardData = {
 
 const WEIGHT_LOOKBACK_MS = 9 * 7 * 24 * 60 * 60 * 1000; // 9 weeks of buffer for "last 8 weeks" charts
 
-const MEALS_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
-const MEALS_HARD_LIMIT = 200;
+// 90-day window: covers meals/workouts/weights deeply enough to compute the
+// pact's "all-in" streak (current + best) without bloating the dashboard.
+const MEALS_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
+const MEALS_HARD_LIMIT = 1000;
 
 /** Load the current group + members + recent meals + this week's pact. */
 export async function loadDashboardData(groupId: string): Promise<DashboardData> {
@@ -149,6 +151,97 @@ export async function loadDashboardData(groupId: string): Promise<DashboardData>
   const weightLogs: WeightRecord[] = weightSnap.docs.map((d) => weightFromSnap(d));
 
   return { group, members, meals, workouts, weightLogs, pact };
+}
+
+/**
+ * "All-in" streak — the current and best historical run of consecutive days
+ * where *every* current pact member logged at least one thing (meal, workout,
+ * or weight). Walks backward from today within a fixed window.
+ *
+ * Today counts when it qualifies; if today doesn't (e.g., not everyone's
+ * logged yet), the current streak is the run ending yesterday — so the user
+ * sees "23 days" through yesterday and keeps the streak alive by logging.
+ */
+export type AllInStreak = {
+  current: number;
+  best: number;
+  /** dayStart ms of the last day in the best run — null if best === 0. */
+  bestEndedMs: number | null;
+};
+
+const STREAK_DAY_MS = 24 * 60 * 60 * 1000;
+
+function dayStartLocal(ms: number): number {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+export function computeAllInStreak(
+  memberUids: string[],
+  meals: Array<{ memberId: string; loggedAt: number }>,
+  workouts: Array<{ memberId: string; loggedAt: number }>,
+  weightLogs: Array<{ memberId: string; loggedAt: number }>,
+  windowDays = 90,
+  now: Date = new Date(),
+): AllInStreak {
+  if (memberUids.length === 0) return { current: 0, best: 0, bestEndedMs: null };
+
+  // Map dayStart → set of memberIds active that day.
+  const daysActive = new Map<number, Set<string>>();
+  const stamp = (memberId: string, loggedAt: number) => {
+    if (!memberId || !loggedAt) return;
+    const day = dayStartLocal(loggedAt);
+    let set = daysActive.get(day);
+    if (!set) {
+      set = new Set();
+      daysActive.set(day, set);
+    }
+    set.add(memberId);
+  };
+  for (const m of meals) stamp(m.memberId, m.loggedAt);
+  for (const w of workouts) stamp(w.memberId, w.loggedAt);
+  for (const wl of weightLogs) stamp(wl.memberId, wl.loggedAt);
+
+  const memberSet = new Set(memberUids);
+  const isAllIn = (day: number): boolean => {
+    const active = daysActive.get(day);
+    if (!active) return false;
+    for (const uid of memberSet) if (!active.has(uid)) return false;
+    return true;
+  };
+
+  const todayMs = dayStartLocal(now.getTime());
+
+  // Current: count consecutive all-in days starting today (or yesterday if
+  // today doesn't yet qualify — keeps the streak from "breaking" mid-day).
+  let current = 0;
+  const startOffset = isAllIn(todayMs) ? 0 : 1;
+  for (let i = startOffset; i < windowDays; i++) {
+    if (isAllIn(todayMs - i * STREAK_DAY_MS)) current += 1;
+    else break;
+  }
+
+  // Best: longest run anywhere in the window.
+  let best = 0;
+  let bestEndedMs: number | null = null;
+  let run = 0;
+  let runEndsMs: number | null = null;
+  for (let i = 0; i < windowDays; i++) {
+    const day = todayMs - i * STREAK_DAY_MS;
+    if (isAllIn(day)) {
+      if (run === 0) runEndsMs = day; // first day of run when walking backward = end of run
+      run += 1;
+      if (run > best) {
+        best = run;
+        bestEndedMs = runEndsMs;
+      }
+    } else {
+      run = 0;
+      runEndsMs = null;
+    }
+  }
+
+  return { current, best, bestEndedMs };
 }
 
 /** Sum macros across a list of meals. */

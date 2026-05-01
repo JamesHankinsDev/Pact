@@ -7,6 +7,7 @@ import { Avatar, AvatarStack, Card, Chip, Eyebrow, Icon } from '@/components/pri
 import { HomeAuthBar } from '@/components/HomeAuthBar';
 import { useAuth } from '@/lib/auth-context';
 import {
+  computeAllInStreak,
   formatWeekRange,
   loadDashboardData,
   mealsLoggedToday,
@@ -14,6 +15,7 @@ import {
   sumMacros,
   todayIndexInWeek,
   weekDayNumbers,
+  type AllInStreak,
   type DashboardData,
   type MealRecord,
   type WeightRecord,
@@ -138,6 +140,11 @@ function Dashboard({
     [members],
   );
 
+  const streak = useMemo<AllInStreak>(
+    () => computeAllInStreak(group.memberUids, meals, workouts, weightLogs),
+    [group.memberUids, meals, workouts, weightLogs],
+  );
+
   const ownAchievements = useMemo<EarnedAchievement[]>(() => {
     if (!user) return [];
     const ownMeals = meals.filter((m) => m.memberId === user.uid);
@@ -165,6 +172,7 @@ function Dashboard({
         <HeroStrip
           group={group}
           members={members}
+          streak={streak}
           todayMealCount={todayMeals.length}
           todayCalories={todayTotals.calories}
           todayProteinG={todayTotals.proteinG}
@@ -314,6 +322,7 @@ function QuickLog() {
 function HeroStrip({
   group,
   members,
+  streak,
   todayMealCount,
   todayCalories,
   todayProteinG,
@@ -323,6 +332,7 @@ function HeroStrip({
 }: {
   group: { name: string; memberUids: string[] };
   members: GroupMemberDoc[];
+  streak: AllInStreak;
   todayMealCount: number;
   todayCalories: number;
   todayProteinG: number;
@@ -331,6 +341,7 @@ function HeroStrip({
   todayVolume: number;
 }) {
   const stack = members.slice(0, 4).map((m) => ({ initials: m.initials, color: m.color }));
+  const subline = streakSubline(streak);
   return (
     <div className={styles.heroGrid}>
       <div
@@ -349,7 +360,7 @@ function HeroStrip({
         <div>
           <Eyebrow color="rgba(10,10,10,0.55)">{group.name.toUpperCase()} · ALL IN</Eyebrow>
           <div className="numeral" style={{ fontSize: 84, marginTop: 4 }}>
-            23
+            {streak.current}
             <span
               style={{
                 fontSize: 20,
@@ -359,12 +370,10 @@ function HeroStrip({
                 marginLeft: 6,
               }}
             >
-              days
+              {streak.current === 1 ? 'day' : 'days'}
             </span>
           </div>
-          <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>
-            Best: 31d (Feb) · Don&rsquo;t break it
-          </div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4 }}>{subline}</div>
         </div>
         {stack.length > 0 && (
           <div style={{ display: 'flex' }}>
@@ -1122,6 +1131,29 @@ function BottomRow({
 function formatQuantity(q: number): string {
   if (q === Math.floor(q)) return q.toString();
   return q.toFixed(2).replace(/\.?0+$/, '');
+}
+
+function streakSubline(streak: AllInStreak): string {
+  if (streak.best === 0 && streak.current === 0) {
+    return "Get the crew in for day 1.";
+  }
+  if (streak.current === 0) {
+    const ago = streak.bestEndedMs
+      ? new Date(streak.bestEndedMs).toLocaleDateString('en-US', { month: 'short' })
+      : null;
+    return ago
+      ? `Best: ${streak.best}d (${ago}) · Restart today.`
+      : `Best: ${streak.best}d · Restart today.`;
+  }
+  if (streak.current >= streak.best) {
+    return "Longest streak ever — don't break it.";
+  }
+  const ago = streak.bestEndedMs
+    ? new Date(streak.bestEndedMs).toLocaleDateString('en-US', { month: 'short' })
+    : null;
+  return ago
+    ? `Best: ${streak.best}d (${ago}) · Don't break it.`
+    : `Best: ${streak.best}d · Don't break it.`;
 }
 
 /* ── Your achievements row ───────────────────────────────────────────── */
