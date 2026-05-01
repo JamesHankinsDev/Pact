@@ -1020,30 +1020,41 @@ function EnergyBalanceCard({
   const netTodayLow = todayLow - tdee;
   const netTodayHigh = todayHigh - tdee;
 
-  // Week-to-date intake range (Mon → today).
+  // Week-to-date — average from days that actually had meals. Averaging
+  // partial / blank days into the projection makes the numbers absurd
+  // (e.g., one 200-kcal meal at noon → "16k kcal deficit this week").
   const todayDay = dayStartMs(Date.now());
   const weekToDate = week.filter((d) => d.dayStartMs <= todayDay);
-  const daysElapsed = Math.max(1, weekToDate.length);
-  const weekLow = weekToDate.reduce(
+  const daysWithMeals = weekToDate.filter((d) => d.meals.length > 0);
+  const daysLogged = daysWithMeals.length;
+
+  const sumLow = daysWithMeals.reduce(
     (a, d) => a + d.meals.reduce((sa, m) => sa + (m.caloriesLow ?? Math.round(m.totals.calories * 0.85)), 0),
     0,
   );
-  const weekHigh = weekToDate.reduce(
+  const sumHigh = daysWithMeals.reduce(
     (a, d) => a + d.meals.reduce((sa, m) => sa + (m.caloriesHigh ?? Math.round(m.totals.calories * 1.15)), 0),
     0,
   );
 
-  // Project to a full 7-day week using week-to-date averages (only meaningful
-  // when we have at least one logged day).
-  const dailyLowAvg = weekLow / daysElapsed;
-  const dailyHighAvg = weekHigh / daysElapsed;
-  const projectedWeekIntakeLow = dailyLowAvg * 7;
-  const projectedWeekIntakeHigh = dailyHighAvg * 7;
-  const projectedNetLow = projectedWeekIntakeLow - tdee * 7;
-  const projectedNetHigh = projectedWeekIntakeHigh - tdee * 7;
-  // Convert to lb (3500 kcal ≈ 1 lb). Negative net → loss → negative lb.
-  const projectedLossHigh = -(projectedNetLow) / 3500; // most loss when intake-low
-  const projectedLossLow = -(projectedNetHigh) / 3500; // least loss when intake-high
+  // Need at least 3 fully-logged days for a meaningful projection — fewer
+  // and one partial day distorts everything (today's lunch ≠ this week's
+  // average). Below the floor we show a "keep logging" hint instead.
+  const PROJECTION_MIN_DAYS = 3;
+  const canProject = daysLogged >= PROJECTION_MIN_DAYS;
+
+  let lbLow = 0;
+  let lbHigh = 0;
+  if (canProject) {
+    const avgLow = sumLow / daysLogged;
+    const avgHigh = sumHigh / daysLogged;
+    // Signed: net < 0 → deficit (loss), net > 0 → surplus (gain).
+    const netWeekLow = avgLow * 7 - tdee * 7;
+    const netWeekHigh = avgHigh * 7 - tdee * 7;
+    // 3500 kcal ≈ 1 lb. Keep the sign so the label can branch correctly.
+    lbLow = netWeekLow / 3500;
+    lbHigh = netWeekHigh / 3500;
+  }
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1098,27 +1109,34 @@ function EnergyBalanceCard({
           </div>
         </div>
 
-        {weekToDate.length > 0 && (
-          <div
-            style={{
-              marginTop: 14,
-              padding: '12px 14px',
-              background: 'rgba(255,255,255,0.02)',
-              border: '1px solid rgba(255,255,255,0.06)',
-              borderRadius: 12,
-            }}
-          >
-            <div style={{ ...mono, fontSize: 10, color: 'var(--text-on-dark-mute)', letterSpacing: '0.1em' }}>
-              PROJECTED THIS WEEK · {daysElapsed} OF 7 DAYS LOGGED
-            </div>
-            <div style={{ ...display, fontSize: 18, fontWeight: 700, marginTop: 4 }}>
-              {projectedWeightLabel(projectedLossLow, projectedLossHigh)}
-            </div>
-            <div style={{ ...mono, fontSize: 10, color: 'var(--text-on-dark-faint)', marginTop: 4, letterSpacing: '0.1em' }}>
-              ASSUMES YOUR CURRENT PACE HOLDS · 3500 KCAL ≈ 1 LB
-            </div>
+        <div
+          style={{
+            marginTop: 14,
+            padding: '12px 14px',
+            background: 'rgba(255,255,255,0.02)',
+            border: '1px solid rgba(255,255,255,0.06)',
+            borderRadius: 12,
+          }}
+        >
+          <div style={{ ...mono, fontSize: 10, color: 'var(--text-on-dark-mute)', letterSpacing: '0.1em' }}>
+            PROJECTED THIS WEEK · {daysLogged} OF 7 DAYS LOGGED
           </div>
-        )}
+          {canProject ? (
+            <>
+              <div style={{ ...display, fontSize: 18, fontWeight: 700, marginTop: 4 }}>
+                {projectedWeightLabel(lbLow, lbHigh)}
+              </div>
+              <div style={{ ...mono, fontSize: 10, color: 'var(--text-on-dark-faint)', marginTop: 4, letterSpacing: '0.1em' }}>
+                ASSUMES YOUR CURRENT PACE HOLDS · 3500 KCAL ≈ 1 LB
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 13, color: 'var(--text-on-dark-mute)', marginTop: 6, lineHeight: 1.5 }}>
+              Keep logging — projection unlocks once you have {PROJECTION_MIN_DAYS}+ days of meals
+              this week. One partial day skews the math.
+            </div>
+          )}
+        </div>
 
         <div
           style={{
@@ -1166,14 +1184,14 @@ function netRangeLabel(low: number, high: number): string {
 }
 
 function projectedWeightLabel(lo: number, hi: number): string {
-  // lo and hi are signed lbs; negative = loss.
-  const isLoss = hi < 0;
-  const isGain = lo > 0;
+  // lo and hi are signed lbs (kcal/3500). Negative = deficit → loss.
+  // Positive = surplus → gain. Caller passes [low-end, high-end] of the
+  // intake band, so lo ≤ hi by construction.
   const fmt = (v: number) => Math.abs(v).toFixed(2);
-  if (isLoss) return `Expected loss · ${fmt(hi)}–${fmt(lo)} lb`;
-  if (isGain) return `Expected gain · ${fmt(lo)}–${fmt(hi)} lb`;
-  // Mixed — could go either way
-  return `Expected: ${fmt(lo)} lb gain → ${fmt(hi)} lb loss`;
+  if (hi < 0) return `Expected loss · ${fmt(hi)}–${fmt(lo)} lb`;       // both deficits
+  if (lo > 0) return `Expected gain · ${fmt(lo)}–${fmt(hi)} lb`;       // both surpluses
+  // Mixed — band crosses maintenance.
+  return `Could go either way · ${fmt(lo)} lb loss to ${fmt(hi)} lb gain`;
 }
 
 function deriveTDEE(goals: NutritionGoals | null, body: BodyProfile | null): number | null {
