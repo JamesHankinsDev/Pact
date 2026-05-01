@@ -204,7 +204,7 @@ export function computeMemberAchievements({
   if (detailedWorkouts && detailedWorkouts.length > 0) {
     const sortedAsc = [...detailedWorkouts].sort((a, b) => a.loggedAt - b.loggedAt);
     let running = 0;
-    let crossedAt: Record<string, number | undefined> = {};
+    const crossedAt: Record<string, number | undefined> = {};
     for (const w of sortedAsc) {
       const wVol = w.exercises.reduce(
         (acc, ex) => acc + ex.sets.reduce((a, s) => a + s.weight * s.reps, 0),
